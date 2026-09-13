@@ -432,3 +432,50 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .delta-up { color: var(--good, #48c78e); }
 .delta-down { color: var(--bad, #ef4444); }
 .rating-line { margin-top: 4px; font-size: 14px; }
+
+/* -------- Rules link in topbar -------- */
+.rules-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  background: var(--bg-card, #1a2030);
+  border: 1px solid var(--line, #2a3242);
+  border-radius: 6px;
+  color: var(--text, #e8ecf3);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s;
+  margin-right: 8px;
+}
+.rules-link:hover {
+  background: var(--accent, #f0b429);
+  color: #0f1420;
+  border-color: var(--accent, #f0b429);
+}
+/* Language visibility for rules link */
+body.lang-en .rules-link .zh { display: none; }
+body.lang-zh .rules-link .en { display: none; }
+
+/* -------- Language toggle button -------- */
+.lang-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--bg-card, #1a2030);
+  border: 1px solid var(--line, #2a3242);
+  border-radius: 6px;
+  color: var(--text, #e8ecf3);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-right: 8px;
+}
+.lang-toggle-btn:hover {
+  background: var(--accent, #f0b429);
+  color: #0f1420;
+  border-color: var(--accent, #f0b429);
+}

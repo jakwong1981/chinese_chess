@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0f1420" />
+<title>Rules & How to Play — 3D Xiangqi</title>
+<link rel="stylesheet" href="./css/style.css" />
+<style>
+  /* Rules page specific styles */
+  .rules-page {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 24px 20px 60px;
+    color: var(--text, #e8ecf3);
+  }
+  .rules-header {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+  .rules-header h1 {
+    font-size: 32px;
+    margin: 0 0 8px;
+    color: var(--accent, #f0b429);
+  }
+  .lang-toggle {
+    display: inline-flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .lang-toggle button {
+    padding: 6px 16px;
+    border: 1px solid var(--line, #2a3242);
+    background: var(--bg-card, #1a2030);
+    color: var(--text, #e8ecf3);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+  }
+  .lang-toggle button.active {
+    background: var(--accent, #f0b429);
+    color: #0f1420;
+    border-color: var(--accent, #f0b429);
+    font-weight: 600;
+  }
+  .rules-section {
+    margin-bottom: 40px;
+  }
+  .rules-section h2 {
+    font-size: 24px;
+    color: var(--accent, #f0b429);
+    border-bottom: 2px solid var(--line, #2a3242);
+    padding-bottom: 8px;
+    margin-bottom: 16px;
+  }
+  .rules-section h3 {
+    font-size: 18px;
+    color: var(--accent-2, #48c78e);
+    margin: 20px 0 10px;
+  }
+  .rules-section p, .rules-section li {
+    font-size: 15px;
+    line-height: 1.7;
+    margin-bottom: 10px;
+  }
+  .rules-section ul {
+    padding-left: 24px;
+  }
+  .piece-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin: 16px 0;
+  }
+  .piece-card {
+    background: var(--bg-card, #1a2030);
+    border: 1px solid var(--line, #2a3242);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+  }
+  .piece-card .piece-icon {
+    font-size: 48px;
+    margin-bottom: 8px;
+    display: block;
+  }
+  .piece-card .piece-name {
+    font-weight: 700;
+    color: var(--accent, #f0b429);
+    font-size: 16px;
+    margin-bottom: 6px;
+  }
+  .piece-card .piece-desc {
+    font-size: 13px;
+    color: var(--muted, #8b95a8);
+    line-height: 1.5;
+  }
+  .special-rule {
+    background: rgba(240, 180, 41, 0.08);
+    border-left: 3px solid var(--accent, #f0b429);
+    padding: 12px 16px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .special-rule strong {
+    color: var(--accent, #f0b429);
+  }
+  .back-link {
+    display: inline-block;
+    margin-top: 24px;
+    padding: 10px 20px;
+    background: var(--bg-card, #1a2030);
+    border: 1px solid var(--line, #2a3242);
+    border-radius: 6px;
+    color: var(--text, #e8ecf3);
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+  .back-link:hover {
+    background: var(--accent, #f0b429);
+    color: #0f1420;
+    border-color: var(--accent, #f0b429);
+  }
+  /* Language visibility */
+  body.lang-en .zh { display: none; }
+  body.lang-zh .en { display: none; }
+</style>
+</head>
+<body class="lang-en">
+<div class="rules-page">
+  <header class="rules-header">
+    <h1>
+      <span class="en">Rules & How to Play</span>
+      <span class="zh">遊戲規則與玩法</span>
+    </h1>
+    <p>
+      <span class="en">Learn Chinese Chess (Xiangqi) — the game of strategy</span>
+      <span class="zh">學習中國象棋 — 策略的遊戲</span>
+    </p>
+    <div class="lang-toggle">
+      <button id="btn-en" class="active">English</button>
+      <button id="btn-zh">繁體中文</button>
+    </div>
+  </header>
+
+  <!-- GAME OVERVIEW -->
+  <section class="rules-section">
+    <h2>
+      <span class="en">Game Overview</span>
+      <span class="zh">遊戲概述</span>
+    </h2>
+    <p>
+      <span class="en">Chinese chess, or <strong>Xiangqi</strong> (象棋), is a two-player strategy game played on a 9×10 board divided by a river in the middle. Each player controls 16 pieces: one General (King), two Advisors, two Elephants, two Horses, two Chariots (Rooks), two Cannons, and five Soldiers (Pawns). The goal is to checkmate the opponent's General.</span>
+      <span class="zh"><strong>中國象棋</strong>是兩人對弈的策略遊戲，棋盤為 9×10 格，中間以「楚河漢界」分隔。每方有 16 枚棋子：一個帥（將）、兩個仕（士）、兩個相（象）、兩個馬、兩個車、兩個炮、五個兵（卒）。目標是將死對方的帥（將）。</span>
+    </p>
+  </section>
+
+  <!-- THE BOARD -->
+  <section class="rules-section">
+    <h2>
+      <span class="en">The Board</span>
+      <span class="zh">棋盤</span>
+    </h2>
+    <ul>
+      <li>
+        <span class="en"><strong>9 files (columns) × 10 ranks (rows)</strong> — pieces are placed on intersections, not squares.</span>
+        <span class="zh"><strong>9 路 × 10 行</strong> — 棋子放在交叉點上，而非格子內。</span>
+      </li>
+      <li>
+        <span class="en"><strong>The River</strong> — divides the board between ranks 4 and 5. Elephants cannot cross; Soldiers gain sideways movement after crossing.</span>
+        <span class="zh"><strong>楚河漢界</strong> — 將棋盤分為第 4 行與第 5 行之間。相（象）不能過河；兵（卒）過河後可以橫走。</span>
+      </li>
+      <li>
+        <span class="en"><strong>The Palace</strong> — a 3×3 area in the center of each side's back rank. The General and Advisors must stay inside.</span>
+        <span class="zh"><strong>九宮</strong> — 每方底線中央的 3×3 區域。帥（將）和仕（士）必須在九宮內活動。</span>
+      </li>
+    </ul>
+  </section>
+
+  <!-- PIECES -->
+  <section class="rules-section">
+    <h2>
+      <span class="en">Pieces & Movement</span>
+      <span class="zh">棋子與走法</span>
+    </h2>
+    <div class="piece-grid">
+      <div class="piece-card">
+        <span class="piece-icon">帥 將</span>
+        <div class="piece-name">
+          <span class="en">General (King)</span>
+          <span class="zh">帥 / 將</span>
+        </div>
+        <div class="piece-desc">
+          <span class="en">Moves one step orthogonally (up/down/left/right). Must stay in the palace. Cannot face the opponent's General directly (flying general rule).</span>
+          <span class="zh">每次走一步，只能直走（上下左右）。必須在九宮內。不能與對方帥（將）直接面對面（飛將規則）。</span>
+        </div>
+      </div>
+      <div class="piece-card">
+        <span class="piece-icon">仕 士</span>
+        <div class="piece-name">
+          <span class="en">Advisor</span>
+          <span class="zh">仕 / 士</span>
+        </div>
+        <div class="piece-desc">
+          <span class="en">Moves one step diagonally. Must stay in the palace. Protects the General.</span>
+          <span class="zh">每次斜走一步。必須在九宮內。保護帥（將）。</span>
+        </div>
+      </div>
+      <div class="piece-card">
+        <span class="piece-icon">相 象</span>
+        <div class="piece-name">
+          <span class="en">Elephant</span>
+          <span class="zh">相 / 象</span>
+        </div>
+        <div class="piece-desc">
+          <span class="en">Moves exactly two steps diagonally (like a blocked bishop). Cannot cross the river. Blocked if the "eye" (intermediate point) is occupied.</span>
+          <span class="zh">每次斜走兩步（像被阻擋的主教）。不能過河。如果「象眼」（中間點）被佔據則被阻擋。</span>
+        </div>
+      </div>
+      <div class="piece-card">
+        <span class="piece-icon">傌 馬</span>
+        <div class="piece-name">
+          <span class="en">Horse</span>
+          <span class="zh">傌 / 馬</span>
+        </div>
+        <div class="piece-desc">
+          <span class="en">Moves in an "L" shape: one step orthogonally, then one step diagonally outward. Can be blocked at the orthogonal step ("horse leg").</span>
+          <span class="zh">走「日」字形：先直走一步，再斜走一步。如果直走的一步被阻擋（「蹩馬腿」），則不能走。</span>
+        </div>
+      </div>
+      <div class="piece-card">
+        <span class="piece-icon">俥 車</span>
+        <div class="piece-name">
+          <span class="en">Chariot (Rook)</span>
+          <span class="zh">俥 / 車</span>
+        </div>
+        <div class="piece-desc">
+          <span class="en">Moves any number of steps orthogonally (like a chess rook). The most powerful piece.</span>
+          <span class="zh">可以直走任意步數（像國際象棋的車）。是最強的棋子。</span>
+        </div>
+      </div>
+      <div class="piece-card">
+        <span class="piece-icon">炮 砲</span>
+        <div class="piece-name">
+          <span class="en">Cannon</span>
+          <span class="zh">炮 / 砲</span>
+        </div>
+        <div class="piece-desc">
+          <span class="en">Moves like a Chariot (orthogonally), but captures by jumping over exactly one piece (the "screen").</span>
+          <span class="zh">移動方式像車（直走），但吃子時必須跳過恰好一個棋子（「炮架」）。</span>
+        </div>
+      </div>
+      <div class="piece-card">
+        <span class="piece-icon">兵 卒</span>
+        <div class="piece-name">
+          <span class="en">Soldier (Pawn)</span>
+          <span class="zh">兵 / 卒</span>
+        </div>
+        <div class="piece-desc">
+          <span class="en">Moves one step forward. After crossing the river, can also move one step sideways. Never moves backward. Promotes to a more mobile piece upon reaching the enemy back rank.</span>
+          <span class="zh">每次向前走一步。過河後也可以橫走一步。永遠不能後退。到達對方底線後成為更靈活的棋子。</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SPECIAL RULES -->
+  <section class="rules-section">
+    <h2>
+      <span class="en">Special Rules</span>
+      <span class="zh">特殊規則</span>
+    </h2>
+    <div class="special-rule">
+      <strong>
+        <span class="en">Flying General (飛將)</span>
+        <span class="zh">飛將</span>
+      </strong>
+      <p>
+        <span class="en">The two Generals cannot face each other directly on the same file with no pieces between them. A move that would create this situation is illegal.</span>
+        <span class="zh">兩個帥（將）不能在同一條直線上直接面對面，中間沒有任何棋子。會造成這種情況的走法是非法的。</span>
+      </p>
+    </div>
+    <div class="special-rule">
+      <strong>
+        <span class="en">Horse Leg Block (蹩馬腿)</span>
+        <span class="zh">蹩馬腿</span>
+      </strong>
+      <p>
+        <span class="en">If the orthogonal step of a Horse's move is blocked by another piece, the Horse cannot complete its "L" movement in that direction.</span>
+        <span class="zh">如果馬的直走一步被其他棋子阻擋，馬就不能向該方向完成「日」字形的走法。</span>
+      </p>
+    </div>
+    <div class="special-rule">
+      <strong>
+        <span class="en">Elephant Eye Block (塞象眼)</span>
+        <span class="zh">塞象眼</span>
+      </strong>
+      <p>
+        <span class="en">If the intermediate diagonal point (the "eye") of an Elephant's two-step diagonal move is occupied, the Elephant is blocked and cannot move there.</span>
+        <span class="zh">如果相（象）斜走兩步的中間對角點（「象眼」）被佔據，相（象）就被阻擋，不能走到那裡。</span>
+      </p>
+    </div>
+    <div class="special-rule">
+      <strong>
+        <span class="en">Cannon Screen (炮架)</span>
+        <span class="zh">炮架</span>
+      </strong>
+      <p>
+        <span class="en">A Cannon captures by jumping over exactly one piece (any color). That piece is the "screen". Without a screen, the Cannon cannot capture.</span>
+        <span class="zh">炮吃子時必須跳過恰好一個棋子（任何顏色）。那個棋子就是「炮架」。沒有炮架，炮不能吃子。</span>
+      </p>
+    </div>
+  </section>
+
+  <!-- HOW TO WIN -->
+  <section class="rules-section">
+    <h2>
+      <span class="en">How to Win</span>
+      <span class="zh">如何獲勝</span>
+    </h2>
+    <ul>
+      <li>
+        <span class="en"><strong>Checkmate</strong> — Attack the opponent's General so it cannot escape capture.</span>
+        <span class="zh"><strong>將死</strong> — 攻擊對方的帥（將），使其無法逃脫。</span>
+      </li>
+      <li>
+        <span class="en"><strong>Stalemate</strong> — In Xiangqi, if a player has no legal moves, they <em>lose</em> (unlike international chess where it's a draw).</span>
+        <span class="zh"><strong>困斃</strong> — 在象棋中，如果一方無棋可走，該方<strong>輸</strong>（不像國際象棋是和棋）。</span>
+      </li>
+      <li>
+        <span class="en"><strong>Resignation</strong> — A player may resign at any time.</span>
+        <span class="zh"><strong>認輸</strong> — 玩家可以隨時認輸。</span>
+      </li>
+      <li>
+        <span class="en"><strong>Timeout</strong> — If a player's clock runs out, they lose.</span>
+        <span class="zh"><strong>超時</strong> — 如果玩家的時間用完，則輸掉比賽。</span>
+      </li>
+    </ul>
+  </section>
+
+  <!-- GAME FEATURES -->
+  <section class="rules-section">
+    <h2>
+      <span class="en">Game Features</span>
+      <span class="zh">遊戲功能</span>
+    </h2>
+    <h3>
+      <span class="en">AI Opponent (10 Levels)</span>
+      <span class="zh">AI 對手（10 級）</span>
+    </h3>
+    <p>
+      <span class="en">Play against the computer with adjustable difficulty:</span>
+      <span class="zh">與電腦對弈，難度可調：</span>
+    </p>
+    <ul>
+      <li>
+        <span class="en"><strong>Level 1 (入門 Beginner)</strong> — Makes random legal moves. Great for learning the rules.</span>
+        <span class="zh"><strong>1 級（入門）</strong> — 隨機走合法棋步。適合學習規則。</span>
+      </li>
+      <li>
+        <span class="en"><strong>Level 2–4 (業餘 Amateur)</strong> — Basic tactics, material awareness.</span>
+        <span class="zh"><strong>2–4 級（業餘）</strong> — 基本戰術，有物質意識。</span>
+      </li>
+      <li>
+        <span class="en"><strong>Level 5–7 (進階 Intermediate)</strong> — Positional play, simple combinations.</span>
+        <span class="zh"><strong>5–7 級（進階）</strong> — 位置戰，簡單組合。</span>
+      </li>
+      <li>
+        <span class="en"><strong>Level 8–10 (大師 Master)</strong> — Deep search, tactical precision. A serious challenge.</span>
+        <span class="zh"><strong>8–10 級（大師）</strong> — 深度搜索，戰術精準。嚴峻挑戰。</span>
+      </li>
+    </ul>
+    <h3>
+      <span class="en">Online Ranked Play (天梯)</span>
+      <span class="zh">線上排位賽（天梯）</span>
+    </h3>
+    <p>
+      <span class="en">Challenge other players in real-time. Quick Match uses Elo rating (starting at 1200) to pair you with opponents of similar strength. Win games to climb the ladder!</span>
+      <span class="zh">即時挑戰其他玩家。快速配對使用 Elo 評分（起始 1200）為你配對實力相近的對手。贏棋提升排名！</span>
+    </p>
+    <h3>
+      <span class="en">Replay & Analysis</span>
+      <span class="zh">回放與分析</span>
+    </h3>
+    <p>
+      <span class="en">All games are saved. Review your matches step-by-step, analyze mistakes, and even "fork" a position to practice from a specific point.</span>
+      <span class="zh">所有對局都會保存。逐步回顧你的比賽，分析錯誤，甚至可以「分叉」某個局面從特定位置開始練習。</span>
+    </p>
+    <h3>
+      <span class="en">3D Board & Controls</span>
+      <span class="zh">3D 棋盤與控制</span>
+    </h3>
+    <ul>
+      <li>
+        <span class="en">Beautiful 3D board with realistic piece orientation (Chinese characters face the correct direction for each side).</span>
+        <span class="zh">精美的 3D 棋盤，棋子方向真實（中文字符為每方正確朝向）。</span>
+      </li>
+      <li>
+        <span class="en"><strong>Dual input:</strong> drag-and-drop or click-to-move.</span>
+        <span class="zh"><strong>雙重輸入：</strong>拖放或點擊移動。</span>
+      </li>
+      <li>
+        <span class="en">Camera controls: orbit (drag), zoom (wheel/pinch), flip board, adjust elevation.</span>
+        <span class="zh">鏡頭控制：環繞（拖動）、縮放（滾輪/捏合）、翻轉棋盤、調整高度。</span>
+      </li>
+      <li>
+        <span class="en">Mobile-friendly with touch offset so your finger doesn't hide the piece.</span>
+        <span class="zh">手機友好，觸摸偏移使你的手指不會遮擋棋子。</span>
+      </li>
+    </ul>
+  </section>
+
+  <!-- TIPS -->
+  <section class="rules-section">
+    <h2>
+      <span class="en">Tips for Beginners</span>
+      <span class="zh">初學者提示</span>
+    </h2>
+    <ul>
+      <li>
+        <span class="en"><strong>Control the center</strong> — Pieces are more active in the middle of the board.</span>
+        <span class="zh"><strong>控制中心</strong> — 棋子在棋盤中央更活躍。</span>
+      </li>
+      <li>
+        <span class="en"><strong>Develop your pieces quickly</strong> — Don't move the same piece multiple times in the opening.</span>
+        <span class="zh"><strong>快速出子</strong> — 開局時不要多次移動同一個棋子。</span>
+      </li>
+      <li>
+        <span class="en"><strong>Protect your General</strong> — Keep Advisors and Elephants nearby for defense.</span>
+        <span class="zh"><strong>保護帥（將）</strong> — 讓仕（士）和相（象）在附近防守。</span>
+      </li>
+      <li>
+        <span class="en"><strong>Use Cannons wisely</strong> — They need a screen to capture, so position them behind other pieces.</span>
+        <span class="zh"><strong>善用炮</strong> — 炮需要炮架才能吃子，所以將它們放在其他棋子後面。</span>
+      </li>
+      <li>
+        <span class="en"><strong>Cross the river with Soldiers</strong> — They become much stronger after crossing.</span>
+        <span class="zh"><strong>兵（卒）過河</strong> — 過河後變得更強。</span>
+      </li>
+      <li>
+        <span class="en"><strong>Watch for forks</strong> — Attack two pieces at once with Chariots or Cannons.</span>
+        <span class="zh"><strong>注意捉雙</strong> — 用車或炮同時攻擊兩個棋子。</span>
+      </li>
+    </ul>
+  </section>
+
+  <div style="text-align: center;">
+    <a href="./index.html" class="back-link">
+      <span class="en">← Back to Game</span>
+      <span class="zh">← 返回遊戲</span>
+    </a>
+  </div>
+</div>
+
+<script>
+  // Language toggle
+  const btnEn = document.getElementById('btn-en');
+  const btnZh = document.getElementById('btn-zh');
+  
+  function setLang(lang) {
+    document.body.className = 'lang-' + lang;
+    btnEn.classList.toggle('active', lang === 'en');
+    btnZh.classList.toggle('active', lang === 'zh');
+    localStorage.setItem('xiangqi3d.rulesLang', lang);
+  }
+  
+  btnEn.addEventListener('click', () => setLang('en'));
+  btnZh.addEventListener('click', () => setLang('zh'));
+  
+  // Restore preference
+  const saved = localStorage.getItem('xiangqi3d.rulesLang');
+  if (saved) setLang(saved);
+</script>
+</body>
+</html>

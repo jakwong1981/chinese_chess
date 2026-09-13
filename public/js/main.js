@@ -95,6 +95,21 @@ function boot() {
     scene.setElevation(prefs.camElev);
   }
 
+  // Language toggle (English / Traditional Chinese)
+  const LANG_KEY = 'xiangqi3d.lang';
+  const savedLang = localStorage.getItem(LANG_KEY) || 'en';
+  document.body.classList.add('lang-' + savedLang);
+  const langBtn = document.getElementById('lang-toggle');
+  if (langBtn) {
+    langBtn.addEventListener('click', () => {
+      const current = document.body.classList.contains('lang-zh') ? 'zh' : 'en';
+      const next = current === 'en' ? 'zh' : 'en';
+      document.body.classList.remove('lang-' + current);
+      document.body.classList.add('lang-' + next);
+      localStorage.setItem(LANG_KEY, next);
+    });
+  }
+
   // Persist prefs on change
   const persist = () => savePrefs({
     aiLevel: Number(document.getElementById('ai-level').value),
