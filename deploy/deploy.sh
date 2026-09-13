@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# 3D Xiangqi — deployment runbook (Ubuntu 22.04/24.04).
+# 3D Xiangqi — deployment runbook (Ubuntu 22.04/24.04, with macOS support).
 #
 # Usage:
 #   bash deploy/deploy.sh              # run unit tests, then deploy
 #   bash deploy/deploy.sh --dry-run    # run unit tests, then print what WOULD happen
 #   bash deploy/deploy.sh --skip-tests # deploy without re-running tests (not recommended)
+#   bash deploy/deploy.sh --local      # macOS/local dev: skip Docker, just verify tests
 #
 # The script is idempotent and non-destructive: it never deletes data volumes and
 # never restarts services that are already healthy.
@@ -16,12 +17,14 @@ DEPLOY_DIR="$REPO_ROOT/deploy"
 ENV_FILE="$DEPLOY_DIR/.env"
 DRY_RUN=0
 SKIP_TESTS=0
+LOCAL_MODE=0
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run)    DRY_RUN=1 ;;
     --skip-tests) SKIP_TESTS=1 ;;
-    -h|--help)    sed -n '2,12p' "$0"; exit 0 ;;
+    --local)      LOCAL_MODE=1 ;;
+    -h|--help)    sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -49,7 +52,19 @@ IS_MACOS=0
 if [ "$OS_TYPE" = "Darwin" ]; then
   IS_MACOS=1
   warn "macOS detected — skipping Linux-specific steps (UFW, Certbot, system Nginx)."
-  warn "For local development, use 'npm start' instead."
+fi
+
+# Local mode (macOS dev): skip Docker, just verify tests
+if [ "$LOCAL_MODE" -eq 1 ]; then
+  log "Local mode: skipping Docker deployment."
+  log "To run the app locally, use: npm start"
+  log "Then open: http://localhost:8080"
+  exit 0
+fi
+
+if [ "$IS_MACOS" -eq 1 ] && [ "$LOCAL_MODE" -eq 0 ]; then
+  warn "For local development on macOS, consider using: bash deploy/deploy.sh --local"
+  warn "Or simply: npm start"
 fi
 
 # ---------------------------------------------------------------------------
