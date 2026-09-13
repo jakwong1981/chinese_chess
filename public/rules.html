@@ -7,28 +7,30 @@
 <title>Rules & How to Play — 3D Xiangqi</title>
 <link rel="stylesheet" href="./css/style.css" />
 <style>
-  /* Rules page specific styles */
+  /* Rules page tab layout */
   .rules-page {
-    max-width: 900px;
+    max-width: 1000px;
     margin: 0 auto;
-    padding: 24px 20px 60px;
+    padding: 20px 20px 60px;
     color: var(--text, #e8ecf3);
   }
   .rules-header {
     text-align: center;
-    margin-bottom: 32px;
+    margin-bottom: 24px;
   }
   .rules-header h1 {
-    font-size: 32px;
+    font-size: 28px;
     margin: 0 0 8px;
     color: var(--accent, #f0b429);
   }
-  .lang-toggle {
-    display: inline-flex;
-    gap: 8px;
+  .header-controls {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
     margin-top: 12px;
+    flex-wrap: wrap;
   }
-  .lang-toggle button {
+  .lang-toggle button, .back-link {
     padding: 6px 16px;
     border: 1px solid var(--line, #2a3242);
     background: var(--bg-card, #1a2030);
@@ -37,6 +39,8 @@
     cursor: pointer;
     font-size: 14px;
     transition: all 0.2s;
+    text-decoration: none;
+    display: inline-block;
   }
   .lang-toggle button.active {
     background: var(--accent, #f0b429);
@@ -44,32 +48,82 @@
     border-color: var(--accent, #f0b429);
     font-weight: 600;
   }
-  .rules-section {
-    margin-bottom: 40px;
+  .back-link:hover {
+    background: var(--accent, #f0b429);
+    color: #0f1420;
+    border-color: var(--accent, #f0b429);
   }
-  .rules-section h2 {
-    font-size: 24px;
-    color: var(--accent, #f0b429);
+  
+  /* Tab navigation */
+  .tab-nav {
+    display: flex;
+    gap: 4px;
     border-bottom: 2px solid var(--line, #2a3242);
-    padding-bottom: 8px;
-    margin-bottom: 16px;
+    margin-bottom: 24px;
+    overflow-x: auto;
+    padding-bottom: 0;
   }
-  .rules-section h3 {
-    font-size: 18px;
+  .tab-btn {
+    padding: 10px 18px;
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: var(--muted, #8b95a8);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s;
+    white-space: nowrap;
+    margin-bottom: -2px;
+  }
+  .tab-btn:hover {
+    color: var(--text, #e8ecf3);
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .tab-btn.active {
+    color: var(--accent, #f0b429);
+    border-bottom-color: var(--accent, #f0b429);
+    font-weight: 600;
+  }
+  
+  /* Tab panels */
+  .tab-panel {
+    display: none;
+    animation: fadeIn 0.3s;
+  }
+  .tab-panel.active {
+    display: block;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  
+  .tab-panel h2 {
+    font-size: 22px;
+    color: var(--accent, #f0b429);
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line, #2a3242);
+  }
+  .tab-panel h3 {
+    font-size: 17px;
     color: var(--accent-2, #48c78e);
     margin: 20px 0 10px;
   }
-  .rules-section p, .rules-section li {
+  .tab-panel p, .tab-panel li {
     font-size: 15px;
     line-height: 1.7;
     margin-bottom: 10px;
   }
-  .rules-section ul {
+  .tab-panel ul {
     padding-left: 24px;
   }
+  
+  /* Piece grid */
   .piece-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 16px;
     margin: 16px 0;
   }
@@ -79,11 +133,17 @@
     border-radius: 8px;
     padding: 16px;
     text-align: center;
+    transition: transform 0.2s;
+  }
+  .piece-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent, #f0b429);
   }
   .piece-card .piece-icon {
-    font-size: 48px;
+    font-size: 42px;
     margin-bottom: 8px;
     display: block;
+    color: var(--accent, #f0b429);
   }
   .piece-card .piece-name {
     font-weight: 700;
@@ -95,7 +155,10 @@
     font-size: 13px;
     color: var(--muted, #8b95a8);
     line-height: 1.5;
+    text-align: left;
   }
+  
+  /* Special rules */
   .special-rule {
     background: rgba(240, 180, 41, 0.08);
     border-left: 3px solid var(--accent, #f0b429);
@@ -105,26 +168,27 @@
   }
   .special-rule strong {
     color: var(--accent, #f0b429);
+    display: block;
+    margin-bottom: 6px;
   }
-  .back-link {
-    display: inline-block;
-    margin-top: 24px;
-    padding: 10px 20px;
-    background: var(--bg-card, #1a2030);
-    border: 1px solid var(--line, #2a3242);
-    border-radius: 6px;
-    color: var(--text, #e8ecf3);
-    text-decoration: none;
-    transition: all 0.2s;
+  .special-rule p {
+    margin: 0;
   }
-  .back-link:hover {
-    background: var(--accent, #f0b429);
-    color: #0f1420;
-    border-color: var(--accent, #f0b429);
-  }
+  
   /* Language visibility */
   body.lang-en .zh { display: none; }
   body.lang-zh .en { display: none; }
+  
+  /* Mobile responsive */
+  @media (max-width: 640px) {
+    .tab-btn {
+      padding: 8px 12px;
+      font-size: 13px;
+    }
+    .piece-grid {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>
 </head>
 <body class="lang-en">
@@ -138,14 +202,52 @@
       <span class="en">Learn Chinese Chess (Xiangqi) — the game of strategy</span>
       <span class="zh">學習中國象棋 — 策略的遊戲</span>
     </p>
-    <div class="lang-toggle">
-      <button id="btn-en" class="active">English</button>
-      <button id="btn-zh">繁體中文</button>
+    <div class="header-controls">
+      <div class="lang-toggle">
+        <button id="btn-en" class="active">English</button>
+        <button id="btn-zh">繁體中文</button>
+      </div>
+      <a href="./index.html" class="back-link">
+        <span class="en">← Back to Game</span>
+        <span class="zh">← 返回遊戲</span>
+      </a>
     </div>
   </header>
 
-  <!-- GAME OVERVIEW -->
-  <section class="rules-section">
+  <!-- Tab Navigation -->
+  <nav class="tab-nav">
+    <button class="tab-btn active" data-tab="overview">
+      <span class="en">Overview</span>
+      <span class="zh">概述</span>
+    </button>
+    <button class="tab-btn" data-tab="board">
+      <span class="en">Board</span>
+      <span class="zh">棋盤</span>
+    </button>
+    <button class="tab-btn" data-tab="pieces">
+      <span class="en">Pieces</span>
+      <span class="zh">棋子</span>
+    </button>
+    <button class="tab-btn" data-tab="special">
+      <span class="en">Special Rules</span>
+      <span class="zh">特殊規則</span>
+    </button>
+    <button class="tab-btn" data-tab="winning">
+      <span class="en">How to Win</span>
+      <span class="zh">如何獲勝</span>
+    </button>
+    <button class="tab-btn" data-tab="features">
+      <span class="en">Features</span>
+      <span class="zh">功能</span>
+    </button>
+    <button class="tab-btn" data-tab="tips">
+      <span class="en">Tips</span>
+      <span class="zh">提示</span>
+    </button>
+  </nav>
+
+  <!-- Tab: Overview -->
+  <div class="tab-panel active" id="tab-overview">
     <h2>
       <span class="en">Game Overview</span>
       <span class="zh">遊戲概述</span>
@@ -154,10 +256,28 @@
       <span class="en">Chinese chess, or <strong>Xiangqi</strong> (象棋), is a two-player strategy game played on a 9×10 board divided by a river in the middle. Each player controls 16 pieces: one General (King), two Advisors, two Elephants, two Horses, two Chariots (Rooks), two Cannons, and five Soldiers (Pawns). The goal is to checkmate the opponent's General.</span>
       <span class="zh"><strong>中國象棋</strong>是兩人對弈的策略遊戲，棋盤為 9×10 格，中間以「楚河漢界」分隔。每方有 16 枚棋子：一個帥（將）、兩個仕（士）、兩個相（象）、兩個馬、兩個車、兩個炮、五個兵（卒）。目標是將死對方的帥（將）。</span>
     </p>
-  </section>
+    <h3>
+      <span class="en">Quick Start</span>
+      <span class="zh">快速開始</span>
+    </h3>
+    <ul>
+      <li>
+        <span class="en"><strong>Solo vs AI:</strong> Choose from 10 difficulty levels (Beginner to Master)</span>
+        <span class="zh"><strong>單人對AI：</strong>從 10 個難度級別中選擇（入門到大師）</span>
+      </li>
+      <li>
+        <span class="en"><strong>Online Ranked:</strong> Challenge real players and climb the ladder</span>
+        <span class="zh"><strong>線上排位：</strong>挑戰真實玩家，提升排名</span>
+      </li>
+      <li>
+        <span class="en"><strong>Private Room:</strong> Play with friends using room codes</span>
+        <span class="zh"><strong>私人房間：</strong>使用房間代碼與朋友對弈</span>
+      </li>
+    </ul>
+  </div>
 
-  <!-- THE BOARD -->
-  <section class="rules-section">
+  <!-- Tab: Board -->
+  <div class="tab-panel" id="tab-board">
     <h2>
       <span class="en">The Board</span>
       <span class="zh">棋盤</span>
@@ -168,18 +288,28 @@
         <span class="zh"><strong>9 路 × 10 行</strong> — 棋子放在交叉點上，而非格子內。</span>
       </li>
       <li>
-        <span class="en"><strong>The River</strong> — divides the board between ranks 4 and 5. Elephants cannot cross; Soldiers gain sideways movement after crossing.</span>
+        <span class="en"><strong>The River (楚河漢界)</strong> — divides the board between ranks 4 and 5. Elephants cannot cross; Soldiers gain sideways movement after crossing.</span>
         <span class="zh"><strong>楚河漢界</strong> — 將棋盤分為第 4 行與第 5 行之間。相（象）不能過河；兵（卒）過河後可以橫走。</span>
       </li>
       <li>
-        <span class="en"><strong>The Palace</strong> — a 3×3 area in the center of each side's back rank. The General and Advisors must stay inside.</span>
+        <span class="en"><strong>The Palace (九宮)</strong> — a 3×3 area in the center of each side's back rank. The General and Advisors must stay inside.</span>
         <span class="zh"><strong>九宮</strong> — 每方底線中央的 3×3 區域。帥（將）和仕（士）必須在九宮內活動。</span>
       </li>
     </ul>
-  </section>
+    <div class="special-rule">
+      <strong>
+        <span class="en">Piece Placement</span>
+        <span class="zh">棋子擺放</span>
+      </strong>
+      <p>
+        <span class="en">Red pieces start on ranks 0–4 (bottom), Black on ranks 5–9 (top). The board is symmetrical — both sides have identical piece arrangements.</span>
+        <span class="zh">紅方棋子從第 0–4 行（底部）開始，黑方從第 5–9 行（頂部）開始。棋盤是對稱的——雙方有相同的棋子排列。</span>
+      </p>
+    </div>
+  </div>
 
-  <!-- PIECES -->
-  <section class="rules-section">
+  <!-- Tab: Pieces -->
+  <div class="tab-panel" id="tab-pieces">
     <h2>
       <span class="en">Pieces & Movement</span>
       <span class="zh">棋子與走法</span>
@@ -263,10 +393,10 @@
         </div>
       </div>
     </div>
-  </section>
+  </div>
 
-  <!-- SPECIAL RULES -->
-  <section class="rules-section">
+  <!-- Tab: Special Rules -->
+  <div class="tab-panel" id="tab-special">
     <h2>
       <span class="en">Special Rules</span>
       <span class="zh">特殊規則</span>
@@ -311,36 +441,46 @@
         <span class="zh">炮吃子時必須跳過恰好一個棋子（任何顏色）。那個棋子就是「炮架」。沒有炮架，炮不能吃子。</span>
       </p>
     </div>
-  </section>
+  </div>
 
-  <!-- HOW TO WIN -->
-  <section class="rules-section">
+  <!-- Tab: How to Win -->
+  <div class="tab-panel" id="tab-winning">
     <h2>
       <span class="en">How to Win</span>
       <span class="zh">如何獲勝</span>
     </h2>
     <ul>
       <li>
-        <span class="en"><strong>Checkmate</strong> — Attack the opponent's General so it cannot escape capture.</span>
+        <span class="en"><strong>Checkmate (將死)</strong> — Attack the opponent's General so it cannot escape capture.</span>
         <span class="zh"><strong>將死</strong> — 攻擊對方的帥（將），使其無法逃脫。</span>
       </li>
       <li>
-        <span class="en"><strong>Stalemate</strong> — In Xiangqi, if a player has no legal moves, they <em>lose</em> (unlike international chess where it's a draw).</span>
+        <span class="en"><strong>Stalemate (困斃)</strong> — In Xiangqi, if a player has no legal moves, they <em>lose</em> (unlike international chess where it's a draw).</span>
         <span class="zh"><strong>困斃</strong> — 在象棋中，如果一方無棋可走，該方<strong>輸</strong>（不像國際象棋是和棋）。</span>
       </li>
       <li>
-        <span class="en"><strong>Resignation</strong> — A player may resign at any time.</span>
+        <span class="en"><strong>Resignation (認輸)</strong> — A player may resign at any time.</span>
         <span class="zh"><strong>認輸</strong> — 玩家可以隨時認輸。</span>
       </li>
       <li>
-        <span class="en"><strong>Timeout</strong> — If a player's clock runs out, they lose.</span>
+        <span class="en"><strong>Timeout (超時)</strong> — If a player's clock runs out, they lose.</span>
         <span class="zh"><strong>超時</strong> — 如果玩家的時間用完，則輸掉比賽。</span>
       </li>
     </ul>
-  </section>
+    <div class="special-rule">
+      <strong>
+        <span class="en">Important Note</span>
+        <span class="zh">重要提示</span>
+      </strong>
+      <p>
+        <span class="en">Perpetual check and perpetual chase are generally not allowed in competitive Xiangqi. The player initiating the repetition must vary their moves.</span>
+        <span class="zh">在競技象棋中，通常不允許長將和長捉。發起重複走法的玩家必須改變走法。</span>
+      </p>
+    </div>
+  </div>
 
-  <!-- GAME FEATURES -->
-  <section class="rules-section">
+  <!-- Tab: Features -->
+  <div class="tab-panel" id="tab-features">
     <h2>
       <span class="en">Game Features</span>
       <span class="zh">遊戲功能</span>
@@ -349,14 +489,10 @@
       <span class="en">AI Opponent (10 Levels)</span>
       <span class="zh">AI 對手（10 級）</span>
     </h3>
-    <p>
-      <span class="en">Play against the computer with adjustable difficulty:</span>
-      <span class="zh">與電腦對弈，難度可調：</span>
-    </p>
     <ul>
       <li>
-        <span class="en"><strong>Level 1 (入門 Beginner)</strong> — Makes random legal moves. Great for learning the rules.</span>
-        <span class="zh"><strong>1 級（入門）</strong> — 隨機走合法棋步。適合學習規則。</span>
+        <span class="en"><strong>Level 1 (入門 Beginner)</strong> — Random legal moves. Great for learning.</span>
+        <span class="zh"><strong>1 級（入門）</strong> — 隨機走合法棋步。適合學習。</span>
       </li>
       <li>
         <span class="en"><strong>Level 2–4 (業餘 Amateur)</strong> — Basic tactics, material awareness.</span>
@@ -367,8 +503,8 @@
         <span class="zh"><strong>5–7 級（進階）</strong> — 位置戰，簡單組合。</span>
       </li>
       <li>
-        <span class="en"><strong>Level 8–10 (大師 Master)</strong> — Deep search, tactical precision. A serious challenge.</span>
-        <span class="zh"><strong>8–10 級（大師）</strong> — 深度搜索，戰術精準。嚴峻挑戰。</span>
+        <span class="en"><strong>Level 8–10 (大師 Master)</strong> — Deep search, tactical precision.</span>
+        <span class="zh"><strong>8–10 級（大師）</strong> — 深度搜索，戰術精準。</span>
       </li>
     </ul>
     <h3>
@@ -393,26 +529,26 @@
     </h3>
     <ul>
       <li>
-        <span class="en">Beautiful 3D board with realistic piece orientation (Chinese characters face the correct direction for each side).</span>
-        <span class="zh">精美的 3D 棋盤，棋子方向真實（中文字符為每方正確朝向）。</span>
+        <span class="en">Beautiful 3D board with realistic piece orientation</span>
+        <span class="zh">精美的 3D 棋盤，棋子方向真實</span>
       </li>
       <li>
-        <span class="en"><strong>Dual input:</strong> drag-and-drop or click-to-move.</span>
-        <span class="zh"><strong>雙重輸入：</strong>拖放或點擊移動。</span>
+        <span class="en"><strong>Dual input:</strong> drag-and-drop or click-to-move</span>
+        <span class="zh"><strong>雙重輸入：</strong>拖放或點擊移動</span>
       </li>
       <li>
-        <span class="en">Camera controls: orbit (drag), zoom (wheel/pinch), flip board, adjust elevation.</span>
-        <span class="zh">鏡頭控制：環繞（拖動）、縮放（滾輪/捏合）、翻轉棋盤、調整高度。</span>
+        <span class="en">Camera: orbit, zoom, flip, elevation control</span>
+        <span class="zh">鏡頭：環繞、縮放、翻轉、高度控制</span>
       </li>
       <li>
-        <span class="en">Mobile-friendly with touch offset so your finger doesn't hide the piece.</span>
-        <span class="zh">手機友好，觸摸偏移使你的手指不會遮擋棋子。</span>
+        <span class="en">Mobile-friendly with touch offset</span>
+        <span class="zh">手機友好，觸摸偏移</span>
       </li>
     </ul>
-  </section>
+  </div>
 
-  <!-- TIPS -->
-  <section class="rules-section">
+  <!-- Tab: Tips -->
+  <div class="tab-panel" id="tab-tips">
     <h2>
       <span class="en">Tips for Beginners</span>
       <span class="zh">初學者提示</span>
@@ -442,18 +578,41 @@
         <span class="en"><strong>Watch for forks</strong> — Attack two pieces at once with Chariots or Cannons.</span>
         <span class="zh"><strong>注意捉雙</strong> — 用車或炮同時攻擊兩個棋子。</span>
       </li>
+      <li>
+        <span class="en"><strong>Trade wisely</strong> — Don't trade a valuable piece for a less valuable one unless there's a clear advantage.</span>
+        <span class="zh"><strong>明智交換</strong> — 除非有明顯優勢，否則不要用高價值棋子換低價值棋子。</span>
+      </li>
+      <li>
+        <span class="en"><strong>Learn basic openings</strong> — Central Cannon, Screen Horse, and Same-Direction Cannons are popular starts.</span>
+        <span class="zh"><strong>學習基本開局</strong> — 中炮、屏風馬、順手炮是流行的開局。</span>
+      </li>
     </ul>
-  </section>
-
-  <div style="text-align: center;">
-    <a href="./index.html" class="back-link">
-      <span class="en">← Back to Game</span>
-      <span class="zh">← 返回遊戲</span>
-    </a>
   </div>
 </div>
 
 <script>
+  // Tab switching
+  const tabBtns = document.querySelectorAll('.tab-btn');
+  const tabPanels = document.querySelectorAll('.tab-panel');
+  
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tabId = btn.dataset.tab;
+      
+      // Update buttons
+      tabBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      
+      // Update panels
+      tabPanels.forEach(panel => {
+        panel.classList.remove('active');
+        if (panel.id === 'tab-' + tabId) {
+          panel.classList.add('active');
+        }
+      });
+    });
+  });
+  
   // Language toggle
   const btnEn = document.getElementById('btn-en');
   const btnZh = document.getElementById('btn-zh');
