@@ -43,6 +43,15 @@ if [ "$(id -u)" -ne 0 ]; then
   if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; fi
 fi
 
+# Detect OS
+OS_TYPE="$(uname -s)"
+IS_MACOS=0
+if [ "$OS_TYPE" = "Darwin" ]; then
+  IS_MACOS=1
+  warn "macOS detected — skipping Linux-specific steps (UFW, Certbot, system Nginx)."
+  warn "For local development, use 'npm start' instead."
+fi
+
 # ---------------------------------------------------------------------------
 # Step 0 — Unit tests gate. Deployment must not proceed on a failing suite.
 # ---------------------------------------------------------------------------
@@ -61,6 +70,9 @@ fi
 # ---------------------------------------------------------------------------
 log "Checking prerequisites..."
 if ! command -v docker >/dev/null 2>&1; then
+  if [ "$IS_MACOS" -eq 1 ]; then
+    die "Docker not found. Install Docker Desktop for Mac from https://docker.com"
+  fi
   log "Installing Docker..."
   run $SUDO apt-get update -y
   run $SUDO apt-get install -y docker.io docker-compose-v2
@@ -69,21 +81,24 @@ else
   log "Docker already installed: $(docker --version)"
 fi
 
-if ! command -v ufw >/dev/null 2>&1; then
-  log "Installing UFW..."
-  run $SUDO apt-get install -y ufw
-fi
-log "Configuring UFW (allow 22, 80, 443)..."
-run $SUDO ufw allow 22/tcp
-run $SUDO ufw allow 80/tcp
-run $SUDO ufw allow 443/tcp
-run $SUDO ufw --force enable || warn "UFW enable skipped (dry-run or already active)."
+# UFW, Certbot, and system Nginx are Linux-only
+if [ "$IS_MACOS" -eq 0 ]; then
+  if ! command -v ufw >/dev/null 2>&1; then
+    log "Installing UFW..."
+    run $SUDO apt-get install -y ufw
+  fi
+  log "Configuring UFW (allow 22, 80, 443)..."
+  run $SUDO ufw allow 22/tcp
+  run $SUDO ufw allow 80/tcp
+  run $SUDO ufw allow 443/tcp
+  run $SUDO ufw --force enable || warn "UFW enable skipped (dry-run or already active)."
 
-if ! command -v certbot >/dev/null 2>&1; then
-  log "Installing Certbot..."
-  run $SUDO apt-get install -y certbot python3-certbot-nginx
-else
-  log "Certbot already installed."
+  if ! command -v certbot >/dev/null 2>&1; then
+    log "Installing Certbot..."
+    run $SUDO apt-get install -y certbot python3-certbot-nginx
+  else
+    log "Certbot already installed."
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -113,35 +128,39 @@ run docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" up
 run docker compose -f "$DEPLOY_DIR/docker-compose.yml" ps
 
 # ---------------------------------------------------------------------------
-# Step 4 — Nginx reverse proxy with WebSocket upgrade.
+# Step 4 — Nginx reverse proxy with WebSocket upgrade (Linux only).
 # ---------------------------------------------------------------------------
-log "Installing Nginx site config..."
-NGINX_CONF_SRC="$DEPLOY_DIR/nginx/xiangqi.conf"
-NGINX_CONF_DST="/etc/nginx/sites-available/xiangqi"
-DOMAIN="${DOMAIN:-example.com}"
-if [ "$DRY_RUN" -eq 1 ]; then
-  log "DRY-RUN: would install $NGINX_CONF_DST (server_name $DOMAIN)"
+if [ "$IS_MACOS" -eq 0 ]; then
+  log "Installing Nginx site config..."
+  NGINX_CONF_SRC="$DEPLOY_DIR/nginx/xiangqi.conf"
+  NGINX_CONF_DST="/etc/nginx/sites-available/xiangqi"
+  DOMAIN="${DOMAIN:-example.com}"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "DRY-RUN: would install $NGINX_CONF_DST (server_name $DOMAIN)"
+  else
+    $SUDO mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/certbot
+    # Substitute the placeholder domain into a temp copy, then install.
+    sed "s/example\.com/${DOMAIN}/g" "$NGINX_CONF_SRC" > /tmp/xiangqi.conf
+    $SUDO cp /tmp/xiangqi.conf "$NGINX_CONF_DST"
+    $SUDO ln -sf "$NGINX_CONF_DST" /etc/nginx/sites-enabled/xiangqi
+    $SUDO nginx -t && $SUDO systemctl reload nginx
+    log "Nginx configured for $DOMAIN with WebSocket upgrade on /ws."
+  fi
 else
-  $SUDO mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/certbot
-  # Substitute the placeholder domain into a temp copy, then install.
-  sed "s/example\.com/${DOMAIN}/g" "$NGINX_CONF_SRC" > /tmp/xiangqi.conf
-  $SUDO cp /tmp/xiangqi.conf "$NGINX_CONF_DST"
-  $SUDO ln -sf "$NGINX_CONF_DST" /etc/nginx/sites-enabled/xiangqi
-  $SUDO nginx -t && $SUDO systemctl reload nginx
-  log "Nginx configured for $DOMAIN with WebSocket upgrade on /ws."
+  warn "Skipping system Nginx setup on macOS. Docker containers handle proxying."
 fi
 
 # ---------------------------------------------------------------------------
-# Step 5 — TLS certificate (optional; requires a real DOMAIN + DNS).
+# Step 5 — TLS certificate (optional; requires a real DOMAIN + DNS, Linux only).
 # ---------------------------------------------------------------------------
-if [ "${DOMAIN:-example.com}" != "example.com" ]; then
+if [ "$IS_MACOS" -eq 0 ] && [ "${DOMAIN:-example.com}" != "example.com" ]; then
   log "Requesting TLS certificate for $DOMAIN..."
   run $SUDO certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos \
       -m "${CERTBOT_EMAIL:-admin@example.com}" --redirect
-else
+elif [ "$IS_MACOS" -eq 0 ]; then
   warn "DOMAIN is still the placeholder; skipping Certbot. Set DOMAIN in $ENV_FILE and re-run."
 fi
 
 log "Deployment complete."
-log "App:      http://localhost:${BACKEND_PORT:-8080}/  (or https://$DOMAIN)"
+log "App:      http://localhost:${BACKEND_PORT:-8080}/  (or https://${DOMAIN:-example.com})"
 log "WebSocket: ws://localhost:${BACKEND_PORT:-8080}/ws"
