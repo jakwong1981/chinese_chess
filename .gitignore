@@ -1,0 +1,10 @@
+node_modules/
+npm-debug.log*
+.DS_Store
+.screens/
+*.log
+.env
+dist/
+build/
+data/
+.qoder/

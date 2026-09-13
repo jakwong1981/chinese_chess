@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#0f1420" />
+<title>3D Xiangqi — 中國象棋</title>
+<link rel="stylesheet" href="./css/style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app" class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">象</span>
+      <span class="brand-text">3D Xiangqi</span>
+      <span class="brand-sub">中國象棋</span>
+    </div>
+    <div class="topbar-right">
+      <span id="mode-pill" class="pill">Offline</span>
+      <button id="btn-menu" class="icon-btn" aria-label="Menu">☰</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- LEFT PANEL: mode + settings -->
+    <aside id="panel-left" class="panel panel-left">
+      <section class="card">
+        <h2 class="card-title">Game Mode</h2>
+        <div class="segmented" role="tablist">
+          <button class="seg-btn active" data-mode="offline" role="tab">Solo vs AI</button>
+          <button class="seg-btn" data-mode="online" role="tab">Online</button>
+        </div>
+
+        <div id="offline-config" class="config">
+          <label class="field">
+            <span>AI Level</span>
+            <div class="level-row">
+              <input id="ai-level" type="range" min="1" max="10" value="3" />
+              <output id="ai-level-out">Lv 3 · Amateur</output>
+            </div>
+          </label>
+          <label class="field">
+            <span>Play As</span>
+            <div class="segmented">
+              <button class="seg-btn active" data-side="r">Red 紅</button>
+              <button class="seg-btn" data-side="b">Black 黑</button>
+            </div>
+          </label>
+          <button id="btn-new-offline" class="primary">New Game</button>
+        </div>
+
+        <div id="online-config" class="config hidden">
+          <label class="field">
+            <span>Display Name</span>
+            <input id="player-name" type="text" placeholder="player" maxlength="16" />
+          </label>
+          <button id="btn-quick" class="primary">Quick Match</button>
+          <div class="or">or</div>
+          <label class="field">
+            <span>Private Room Code</span>
+            <div class="row">
+              <input id="room-code" type="text" placeholder="XQ0000" maxlength="10" />
+              <button id="btn-join" class="ghost">Join</button>
+            </div>
+          </label>
+          <div class="ladder-note">Quick Match is <strong>ranked</strong> — it counts toward the ladder. Private rooms are casual.</div>
+          <div id="online-status" class="status">Not connected</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">Controls</h2>
+        <div class="btn-grid">
+          <button id="btn-undo" class="ghost">↶ Undo</button>
+          <button id="btn-hint" class="ghost">💡 Hint</button>
+          <button id="btn-flip" class="ghost">⇅ Flip</button>
+          <button id="btn-resign" class="ghost danger">⚑ Resign</button>
+        </div>
+        <label class="field">
+          <span>Camera</span>
+          <input id="cam-elev" type="range" min="15" max="80" value="48" />
+        </label>
+      </section>
+    </aside>
+
+    <!-- CENTER: 3D canvas -->
+    <section class="stage">
+      <div id="canvas-host">
+        <canvas id="board-canvas"></canvas>
+        <div id="turn-banner" class="turn-banner">Red to move</div>
+        <div id="check-flash" class="check-flash hidden">CHECK</div>
+        <div id="toast" class="toast hidden"></div>
+      </div>
+      <div id="bottom-sheet" class="bottom-sheet">
+        <div class="sheet-grip"></div>
+        <div class="sheet-body">
+          <div class="sheet-row">
+            <button id="btn-undo-m" class="ghost">↶</button>
+            <button id="btn-hint-m" class="ghost">💡</button>
+            <button id="btn-flip-m" class="ghost">⇅</button>
+            <button id="btn-resign-m" class="ghost danger">⚑</button>
+          </div>
+          <div class="sheet-row">
+            <span class="sheet-label">AI Level</span>
+            <input id="ai-level-m" type="range" min="1" max="10" value="3" />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT PANEL: clocks, history, replay -->
+    <aside id="panel-right" class="panel panel-right">
+      <section class="card">
+        <div class="player" id="player-black">
+          <div class="p-name">Black 黑方</div>
+          <div class="p-rating hidden" id="rating-black"></div>
+          <div class="p-clock" id="clock-black">10:00</div>
+        </div>
+      </section>
+
+      <section class="card grow">
+        <h2 class="card-title">Move History</h2>
+        <ol id="history-list" class="history"></ol>
+      </section>
+
+      <section class="card">
+        <div class="player" id="player-red">
+          <div class="p-name">Red 紅方</div>
+          <div class="p-rating hidden" id="rating-red"></div>
+          <div class="p-clock" id="clock-red">10:00</div>
+        </div>
+      </section>
+
+      <section class="card replay-card">
+        <h2 class="card-title">Replay</h2>
+        <div class="replay-row">
+          <select id="replay-list" class="select"></select>
+        </div>
+        <div class="replay-row">
+          <button id="btn-replay-load" class="ghost">Load</button>
+          <button id="btn-replay-fork" class="ghost">Fork vs AI</button>
+        </div>
+        <div id="replay-controls" class="replay-controls hidden">
+          <div class="replay-row">
+            <button id="rp-start" class="ghost">⏮</button>
+            <button id="rp-prev" class="ghost">◀</button>
+            <button id="rp-play" class="primary">▶</button>
+            <button id="rp-next" class="ghost">▶|</button>
+            <button id="rp-end" class="ghost">⏭</button>
+          </div>
+          <input id="rp-scrub" type="range" min="0" max="0" value="0" />
+          <div class="replay-row speed-row">
+            <span class="sheet-label">Speed</span>
+            <div class="segmented small">
+              <button class="seg-btn active" data-speed="1">1×</button>
+              <button class="seg-btn" data-speed="2">2×</button>
+              <button class="seg-btn" data-speed="4">4×</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card ladder-card">
+        <h2 class="card-title">Ladder 天梯
+          <button id="btn-ladder-refresh" class="icon-btn" title="Refresh ladder" aria-label="Refresh ladder">⟳</button>
+        </h2>
+        <div id="ladder-self" class="ladder-self hidden"></div>
+        <ol id="ladder-list" class="ladder"></ol>
+      </section>
+    </aside>
+  </main>
+
+  <!-- Overlay: main menu / game over -->
+  <div id="overlay" class="overlay hidden">
+    <div class="overlay-card">
+      <h1 id="overlay-title">Game Over</h1>
+      <p id="overlay-msg"></p>
+      <div class="overlay-btns">
+        <button id="overlay-primary" class="primary">New Game</button>
+        <button id="overlay-secondary" class="ghost">Review Board</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Undo consent modal -->
+  <div id="undo-modal" class="overlay hidden">
+    <div class="overlay-card small">
+      <h1>Undo requested</h1>
+      <p id="undo-msg">Opponent asks to take back a move.</p>
+      <div class="countdown"><span id="undo-count">15</span>s</div>
+      <div class="overlay-btns">
+        <button id="undo-accept" class="primary">Accept</button>
+        <button id="undo-decline" class="ghost danger">Decline</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>

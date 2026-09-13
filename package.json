@@ -1,0 +1,22 @@
+{
+  "name": "xiangqi-3d",
+  "version": "0.1.0",
+  "description": "3D Chinese Chess (Xiangqi) web game — frontend MVP with mock STOMP backend.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test scripts/test.mjs",
+    "test:rules": "node scripts/rules-smoke.mjs",
+    "deploy": "npm test && bash deploy/deploy.sh",
+    "deploy:check": "npm test && bash deploy/deploy.sh --dry-run"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "license": "MIT"
+}
