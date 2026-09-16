@@ -43,7 +43,9 @@ function makeFaceTexture(side, type) {
   ctx.arc(size/2, size/2, size/2 - 26, 0, Math.PI*2);
   ctx.stroke();
 
-  // Character
+  // Character. The cylinder top cap's UVs map canvas-up to world +X (screen-right
+  // at the default camera), so draw the glyph rotated 90° anti-clockwise — this
+  // makes it stand upright on screen with its top pointing away from the viewer.
   const glyph = GLYPHS[side][type];
   ctx.fillStyle = rimColor;
   ctx.font = `bold ${Math.floor(size * 0.55)}px "PingFang TC", "Microsoft JhengHei", "Noto Serif TC", serif`;
@@ -53,7 +55,11 @@ function makeFaceTexture(side, type) {
   ctx.shadowColor = 'rgba(0,0,0,.3)';
   ctx.shadowBlur = 4;
   ctx.shadowOffsetY = 2;
-  ctx.fillText(glyph, size/2, size/2 + 6);
+  ctx.save();
+  ctx.translate(size / 2, size / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText(glyph, 0, 6);
+  ctx.restore();
   ctx.shadowColor = 'transparent';
 
   const tex = new THREE.CanvasTexture(canvas);

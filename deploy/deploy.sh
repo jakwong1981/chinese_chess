@@ -2,7 +2,8 @@
 # 3D Xiangqi — deployment runbook (Ubuntu 22.04/24.04, with macOS support).
 #
 # Usage:
-#   bash deploy/deploy.sh              # run unit tests, then deploy
+#   bash deploy/deploy.sh              # run unit tests, then deploy (Node mock backend)
+#   bash deploy/deploy.sh --java       # run tests, then deploy the Spring Boot backend
 #   bash deploy/deploy.sh --dry-run    # run unit tests, then print what WOULD happen
 #   bash deploy/deploy.sh --skip-tests # deploy without re-running tests (not recommended)
 #   bash deploy/deploy.sh --local      # macOS/local dev: skip Docker, just verify tests
@@ -18,13 +19,15 @@ ENV_FILE="$DEPLOY_DIR/.env"
 DRY_RUN=0
 SKIP_TESTS=0
 LOCAL_MODE=0
+JAVA_MODE=0
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run)    DRY_RUN=1 ;;
     --skip-tests) SKIP_TESTS=1 ;;
     --local)      LOCAL_MODE=1 ;;
-    -h|--help)    sed -n '2,13p' "$0"; exit 0 ;;
+    --java)       JAVA_MODE=1 ;;
+    -h|--help)    sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -77,7 +80,14 @@ else
   if ! (cd "$REPO_ROOT" && npm test); then
     die "Unit tests FAILED — aborting deployment."
   fi
-  log "Unit tests passed."
+  log "Node unit tests passed."
+  if [ "$JAVA_MODE" -eq 1 ]; then
+    log "Running Spring Boot tests (gate)..."
+    if ! (cd "$REPO_ROOT/server-java" && ./mvnw -q test); then
+      die "Spring Boot tests FAILED — aborting deployment."
+    fi
+    log "Spring Boot tests passed."
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -94,6 +104,39 @@ if ! command -v docker >/dev/null 2>&1; then
   run $SUDO systemctl enable --now docker
 else
   log "Docker already installed: $(docker --version)"
+fi
+
+# Check if Docker daemon is running
+if ! docker info >/dev/null 2>&1; then
+  warn "Docker daemon is not running."
+  if [ "$IS_MACOS" -eq 1 ]; then
+    log "Starting Docker Desktop..."
+    if [ "$DRY_RUN" -eq 0 ]; then
+      open -a Docker
+      # Wait for Docker to be ready (up to 30 seconds)
+      for i in {1..30}; do
+        if docker info >/dev/null 2>&1; then
+          log "Docker Desktop started successfully."
+          break
+        fi
+        if [ "$i" -eq 30 ]; then
+          die "Docker Desktop failed to start. Please start it manually."
+        fi
+        sleep 1
+      done
+    else
+      log "DRY-RUN: would start Docker Desktop"
+    fi
+  else
+    log "Starting Docker service..."
+    run $SUDO systemctl start docker
+    sleep 2
+    if ! docker info >/dev/null 2>&1; then
+      die "Failed to start Docker daemon."
+    fi
+  fi
+else
+  log "Docker daemon is running."
 fi
 
 # UFW, Certbot, and system Nginx are Linux-only
@@ -138,8 +181,23 @@ fi
 # ---------------------------------------------------------------------------
 # Step 3 — Build & start the stack.
 # ---------------------------------------------------------------------------
-log "Building and starting containers (xq_postgres, xq_redis, xq_backend)..."
-run docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" up -d --build
+log "Checking for existing containers..."
+# Check if containers already exist and remove them for a clean reinstall
+if docker compose -f "$DEPLOY_DIR/docker-compose.yml" ps -q 2>/dev/null | grep -q .; then
+  warn "Existing containers found. Removing for clean reinstall..."
+  run docker compose -f "$DEPLOY_DIR/docker-compose.yml" down --remove-orphans
+  log "Old containers removed."
+else
+  log "No existing containers found."
+fi
+
+if [ "$JAVA_MODE" -eq 1 ]; then
+  log "Building and starting the Spring Boot backend (xq_backend_java)..."
+  run docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" up -d --build xq_backend_java
+else
+  log "Building and starting containers (xq_postgres, xq_redis, xq_backend)..."
+  run docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" up -d --build
+fi
 run docker compose -f "$DEPLOY_DIR/docker-compose.yml" ps
 
 # ---------------------------------------------------------------------------
@@ -177,5 +235,10 @@ elif [ "$IS_MACOS" -eq 0 ]; then
 fi
 
 log "Deployment complete."
-log "App:      http://localhost:${BACKEND_PORT:-8080}/  (or https://${DOMAIN:-example.com})"
-log "WebSocket: ws://localhost:${BACKEND_PORT:-8080}/ws"
+if [ "$JAVA_MODE" -eq 1 ]; then
+  log "App (Java): http://localhost:${BACKEND_PORT_JAVA:-8081}/  (or https://${DOMAIN:-example.com})"
+  log "WebSocket:  ws://localhost:${BACKEND_PORT_JAVA:-8081}/ws"
+else
+  log "App:      http://localhost:${BACKEND_PORT:-8080}/  (or https://${DOMAIN:-example.com})"
+  log "WebSocket: ws://localhost:${BACKEND_PORT:-8080}/ws"
+fi

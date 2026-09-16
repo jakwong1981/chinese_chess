@@ -1,0 +1,45 @@
+server:
+  port: ${PORT:8080}
+  address: ${HOST:0.0.0.0}
+
+spring:
+  application:
+    name: xiangqi-server
+  # Static files are served by com.xiangqi.config.WebConfig from the repo's
+  # public/ and shared/ directories (parity with the Node mock backend).
+  web:
+    resources:
+      add-mappings: false
+  # PostgreSQL is required at runtime (matches + Elo ladder). The compose stack
+  # injects SPRING_DATASOURCE_*; the defaults below suit a local Postgres.
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/xiangqi}
+    username: ${SPRING_DATASOURCE_USERNAME:${POSTGRES_USER:xiangqi}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${POSTGRES_PASSWORD:xiangqi}}
+  jpa:
+    hibernate:
+      ddl-auto: update
+  # Redis backs room state + the pub/sub event bus in the default "redis"
+  # cluster mode. The compose stack injects REDIS_*; the defaults suit a
+  # local, password-less Redis.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+
+xiangqi:
+  # Room-state / pub-sub backbone: "redis" shares rooms across replicas,
+  # "memory" runs single-process (tests, local runs without Docker).
+  cluster:
+    mode: ${XQ_CLUSTER_MODE:redis}
+  # Directory that contains public/ and shared/. Defaults to the repo root
+  # when the app is started from server-java/ (./mvnw spring-boot:run).
+  static-root: ${XQ_STATIC_ROOT:..}
+  # One-time import source: if the players table is empty and this legacy
+  # Node-mock ratings file exists, its records are migrated into PostgreSQL.
+  ratings-file: ${XQ_RATINGS_FILE:../data/ratings.json}
+
+logging:
+  level:
+    root: info
