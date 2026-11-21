@@ -2,7 +2,7 @@
 // Mobile touch adds +0.35 world-unit Y offset to the dragged piece so the finger doesn't hide it.
 
 import * as THREE from 'three';
-import { PIECE_HEIGHT } from './pieces.js';
+import { PIECE_BASE_Y } from './pieces.js';
 import { gridToWorld, worldToGrid, BOARD_Y } from './board.js';
 
 const DRAG_LIFT_DESKTOP = 0.15;
@@ -28,7 +28,10 @@ export class Input {
 
   _bind() {
     const c = this.canvas;
-    c.addEventListener('pointerdown', (e) => this._onDown(e));
+    c.addEventListener('pointerdown', (e) => {
+      this.scene.fx?.unlock();
+      this._onDown(e);
+    });
     c.addEventListener('pointermove', (e) => this._onMove(e));
     c.addEventListener('pointerup', (e) => this._onUp(e));
     c.addEventListener('pointercancel', (e) => this._onUp(e));
@@ -152,7 +155,7 @@ export class Input {
       const point = this._raycastPlane();
       const drop = point ? worldToGrid(point) : null;
       // Snap back visually
-      const home = gridToWorld(fromX, fromY, PIECE_HEIGHT / 2);
+      const home = gridToWorld(fromX, fromY, PIECE_BASE_Y);
       mesh.position.copy(home);
       this.dragging = null;
       if (drop && (drop.x !== fromX || drop.y !== fromY)) {
@@ -179,7 +182,7 @@ export class Input {
     const lift = this.isTouch ? DRAG_LIFT_TOUCH : DRAG_LIFT_DESKTOP;
     this.dragging = { mesh, x, y, lift };
     const p = mesh.position;
-    p.y = PIECE_HEIGHT / 2 + lift;
+    p.y = PIECE_BASE_Y + lift;
     mesh.userData.baseScale = mesh.scale.x;
     mesh.scale.setScalar(1.08);
   }
@@ -198,7 +201,7 @@ export class Input {
     this.selected = null;
     if (this.dragging) {
       const m = this.dragging.mesh;
-      const home = gridToWorld(this.dragging.x, this.dragging.y, PIECE_HEIGHT / 2);
+      const home = gridToWorld(this.dragging.x, this.dragging.y, PIECE_BASE_Y);
       m.position.copy(home);
       m.scale.setScalar(1);
       this.dragging = null;

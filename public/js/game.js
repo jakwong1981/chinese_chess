@@ -8,13 +8,13 @@ import {
   legalMoves, applyMove, isLegalMove, gameStatus, isInCheck, kingsFacing, findKing, idx, xy,
   moveToNotation
 } from '../../shared/rules.js';
-import { createPieceMesh, createHighlightRing, createMoveDot, PIECE_HEIGHT } from './pieces.js';
+import { createPieceMesh, createHighlightRing, createMoveDot, PIECE_BASE_Y, PIECE_RADIUS } from './pieces.js';
 import { gridToWorld } from './board.js';
+import { CANNON_FLIGHT_MS } from './fx.js';
 import { StompClient, DEST } from './net.js';
 import { levelConfig, LEVELS } from './ai.js';
 
 const ANIM_MS = 340;
-const CAPTURE_FADE_MS = 220;
 
 export class Game {
   constructor(scene, opts = {}) {
@@ -27,6 +27,7 @@ export class Game {
     this.turn = RED;
     this.history = [];
     this.status = { over: false, inCheck: false };
+    this._checkHold = false;
     this.pieceMeshes = new Map();     // board-index -> mesh
     this.markers = [];                // legal-move dots currently shown
     this.lastMoveRing = null;
@@ -77,6 +78,8 @@ export class Game {
     this.turn = RED;
     this.history = [];
     this.status = { over: false, inCheck: false };
+    this._checkHold = false;
+    this.scene.fx?.clear();
     this.clocks = { r: opts.baseMs ?? 600000, b: opts.baseMs ?? 600000 };
     this._buildPieces();
     this._interactionEnabled = true;
@@ -88,8 +91,8 @@ export class Game {
   }
 
   _buildPieces() {
-    // Wipe old meshes.
-    for (const m of this.pieceMeshes.values()) this.scene.pieceLayer.remove(m);
+    const layer = this.scene.pieceLayer;
+    while (layer.children.length) layer.remove(layer.children[0]);
     this.pieceMeshes.clear();
     this._clearMarkers();
     if (this.lastMoveRing) { this.scene.markerLayer.remove(this.lastMoveRing); this.lastMoveRing = null; }
@@ -101,7 +104,7 @@ export class Game {
       if (!p) continue;
       const mesh = createPieceMesh(p.side, p.type);
       const [x, y] = xy(i);
-      const pos = gridToWorld(x, y, PIECE_HEIGHT / 2);
+      const pos = gridToWorld(x, y, PIECE_BASE_Y);
       mesh.position.copy(pos);
       mesh.userData.pieceId = p.id;
       mesh.userData.gridPos = { x, y };
@@ -124,6 +127,7 @@ export class Game {
     if (!this._interactionEnabled) return false;
     if (this.mode === 'replay') return false;
     if (this.status.over) return false;
+    if (this._checkHold) return false;
     if (this.mode === 'online') return this.turn === this.onlineSide && !this._animQueue.length;
     return this.turn === this.humanSide && !this._animQueue.length;
   }
@@ -204,12 +208,33 @@ export class Game {
     this._updateFlyingGeneralWarning();
     this.emit('history', { history: this.history, notation, move: mv });
     this.emit('turn', { turn: this.turn, inCheck: this.status.inCheck });
+    const checking = this.status.inCheck || (this.status.over && this.status.reason === 'checkmate');
+    if (checking) this._playCheckSpectacle();
     if (this.status.over) {
       this._interactionEnabled = false;
       this.emit('gameover', { winner: this.status.winner, reason: this.status.reason });
-    } else {
+    } else if (!checking) {
       this._maybeAIMove();
     }
+  }
+
+  _playCheckSpectacle(victimSide = this.turn) {
+    const kingI = findKing(this.board, victimSide);
+    if (kingI < 0) return;
+    const [kx, ky] = xy(kingI);
+    const mate = !!(this.status.over && this.status.reason === 'checkmate');
+    this._checkHold = true;
+    this.scene.fx.playCheck({
+      king: gridToWorld(kx, ky, 0),
+      attackerSide: opposite(victimSide),
+      mate,
+      onDone: () => {
+        this._checkHold = false;
+        if (this.mode === 'offline' && !this.status.over && this.turn !== this.humanSide) {
+          this._maybeAIMove();
+        }
+      }
+    });
   }
 
   _animateMove(mv, capturedPiece) {
@@ -217,21 +242,31 @@ export class Game {
     const toI = idx(mv.toX, mv.toY);
     const mover = this.pieceMeshes.get(fromI);
     if (!mover) return;
-    // Remove captured mesh with a small fade.
+    let capMesh = null;
     if (capturedPiece) {
-      const capMesh = this.pieceMeshes.get(toI);
-      if (capMesh) {
-        this.pieceMeshes.delete(toI);
-        this._fadeAndRemove(capMesh);
-      }
+      capMesh = this.pieceMeshes.get(toI) || null;
+      if (capMesh) this.pieceMeshes.delete(toI);
     }
     this.pieceMeshes.delete(fromI);
     this.pieceMeshes.set(toI, mover);
-    const target = gridToWorld(mv.toX, mv.toY, PIECE_HEIGHT / 2);
+    const target = gridToWorld(mv.toX, mv.toY, PIECE_BASE_Y);
     const start = mover.position.clone();
+    const attackerType = mover.userData.piece?.type;
+    const cannonShot = !!(capMesh && attackerType === 'C');
+    if (capMesh) {
+      this.scene.fx.playCapture({
+        type: attackerType,
+        from: start.clone(),
+        to: target.clone(),
+        victim: capMesh,
+        mover
+      });
+    }
     const apexY = Math.max(start.y, target.y) + 0.55;
-    const t0 = performance.now();
+    const delay = cannonShot ? CANNON_FLIGHT_MS : 0;
+    const t0 = performance.now() + delay;
     const anim = (now) => {
+      if (now < t0) return true;
       const t = Math.min(1, (now - t0) / ANIM_MS);
       const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOutQuad
       mover.position.x = start.x + (target.x - start.x) * e;
@@ -251,25 +286,8 @@ export class Game {
     this._animQueue.push(anim);
   }
 
-  _fadeAndRemove(mesh) {
-    const t0 = performance.now();
-    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const m of mats) { m.transparent = true; }
-    const anim = (now) => {
-      const t = Math.min(1, (now - t0) / CAPTURE_FADE_MS);
-      for (const m of mats) m.opacity = 1 - t;
-      mesh.scale.setScalar(1 - t * 0.4);
-      if (t >= 1) {
-        this.scene.pieceLayer.remove(mesh);
-        for (const m of mats) m.dispose?.();
-        return false;
-      }
-      return true;
-    };
-    this._animQueue.push(anim);
-  }
-
   tickAnimations(now = performance.now()) {
+    this.scene.fx?.tick(now);
     if (!this._animQueue.length) return;
     this._animQueue = this._animQueue.filter(fn => fn(now));
   }
@@ -357,7 +375,7 @@ export class Game {
 
   showHintMarker(mv) {
     if (!this.hintRing) {
-      this.hintRing = createHighlightRing(0x4ec9ff, PIECE_HEIGHT * 2.6);
+      this.hintRing = createHighlightRing(0x4ec9ff, PIECE_RADIUS * 1.2);
       this.scene.markerLayer.add(this.hintRing);
     }
     // Show two rings — source and destination — via a group.
@@ -504,11 +522,13 @@ export class Game {
         this.turn = msg.turn;
         this.history.push({ ...mv, side: mv.side, captured: captured?.type || null, at: Date.now(), notation: msg.notation });
         this._animateMove(mv, captured ? { type: captured } : null);
+        this.status = { over: false, inCheck: !!msg.inCheck };
         this._showLastMove(mv);
         this._updateCheckFlash();
         this._updateFlyingGeneralWarning();
         this.emit('history', { history: this.history, notation: msg.notation, move: mv });
         this.emit('turn', { turn: this.turn, inCheck: msg.inCheck });
+        if (msg.inCheck) this._playCheckSpectacle();
         this.emit('clocks', msg.clocks);
         break;
       }
@@ -539,7 +559,8 @@ export class Game {
         break;
       case 'GAME_OVER':
         this.board = decodeBoard(msg.board);
-        this.status = { over: true, winner: msg.winner, reason: msg.reason };
+        this.status = { over: true, winner: msg.winner, reason: msg.reason, inCheck: msg.reason === 'checkmate' };
+        if (msg.reason === 'checkmate') this._playCheckSpectacle(opposite(msg.winner));
         this._interactionEnabled = false;
         if (msg.ratings) {
           // msg.ratings = { r: {rating, delta}, b: {rating, delta} } after a ranked game
@@ -567,7 +588,7 @@ export class Game {
     this._rebuildFromHistoryAt(this.replayIndex);
   }
 
-  _rebuildFromHistoryAt(n) {
+  _rebuildFromHistoryAt(n, announceCheck = false) {
     let b = initialBoard();
     for (let i = 0; i < n; i++) b = applyMove(b, this.history[i]);
     this.board = b;
@@ -580,13 +601,15 @@ export class Game {
     this._updateFlyingGeneralWarning();
     this.emit('turn', { turn: this.turn, inCheck: this.status.inCheck });
     this.emit('replay-index', { index: n, total: this.history.length });
+    if (announceCheck && this.status.inCheck) this._playCheckSpectacle();
   }
 
   replaySeek(n) {
     n = Math.max(0, Math.min(this.history.length, n | 0));
     if (n === this.replayIndex) return;
+    const forward = n === this.replayIndex + 1;
     this.replayIndex = n;
-    this._rebuildFromHistoryAt(n);
+    this._rebuildFromHistoryAt(n, forward);
   }
 
   replayStep(delta) { this.replaySeek((this.replayIndex || 0) + delta); }

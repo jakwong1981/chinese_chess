@@ -1,122 +1,167 @@
-// Flat cylindrical tokens with Chinese-character canvas textures on top.
-// Red pieces: ivory disc with red glyph and red rim.
-// Black pieces: ivory disc with black glyph and dark rim.
+// Traditional beveled wooden discs with UV wood grain and engraved-style glyphs.
+// Red faces world −Z; Black faces world +Z.
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GLYPHS, RED, BLACK } from '../../shared/rules.js';
 
-export const PIECE_RADIUS = 0.42;
+export const PIECE_RADIUS = 0.4;
+export const PIECE_BASE_Y = 0;
 export const PIECE_HEIGHT = 0.18;
 
-const textureCache = new Map();
+const geomCache = new Map();
+const materialCache = new Map();
 
-function makeFaceTexture(side, type) {
-  const key = `${side}${type}`;
-  if (textureCache.has(key)) return textureCache.get(key);
-  const size = 256;
+/** Yaw that points local −Z along the world XZ direction (dirX, dirZ). */
+export function yawFacing(dirX, dirZ) {
+  return Math.atan2(-dirX, -dirZ);
+}
+
+function buildGeometry() {
+  const profile = [
+    [0, 0], [0.34, 0], [0.38, 0.012], [0.4, 0.045],
+    [0.4, 0.13], [0.38, 0.164], [0.35, 0.18], [0, 0.18]
+  ].map(([x, y]) => new THREE.Vector2(x, y));
+  const body = new THREE.LatheGeometry(profile, 48);
+  body.clearGroups();
+  const glyph = new THREE.CircleGeometry(0.35, 48);
+  glyph.rotateX(-Math.PI / 2);
+  glyph.translate(0, 0.182, 0);
+  glyph.clearGroups();
+  const merged = mergeGeometries([body, glyph], true);
+  body.dispose();
+  glyph.dispose();
+  return merged;
+}
+
+function geometryFor(type) {
+  let g = geomCache.get(type);
+  if (!g) {
+    g = buildGeometry();
+    geomCache.set(type, g);
+  }
+  return g;
+}
+
+function drawWoodGrain(ctx, size, light, dark) {
+  const base = ctx.createLinearGradient(0, 0, size, size);
+  base.addColorStop(0, light);
+  base.addColorStop(0.55, dark);
+  base.addColorStop(1, light);
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, size, size);
+
+  for (let i = 0; i < 90; i++) {
+    const y = i * size / 90;
+    ctx.strokeStyle = i % 3 ? 'rgba(66, 35, 17, 0.13)' : 'rgba(255, 231, 185, 0.16)';
+    ctx.lineWidth = 0.7 + (i % 4) * 0.35;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.bezierCurveTo(
+      size * 0.25, y + Math.sin(i * 1.7) * 5,
+      size * 0.7, y - Math.cos(i * 1.2) * 4,
+      size, y + Math.sin(i) * 3
+    );
+    ctx.stroke();
+  }
+
+  for (const [x, y, r] of [[0.24, 0.3, 0.055], [0.72, 0.68, 0.04]]) {
+    ctx.strokeStyle = 'rgba(65, 34, 17, 0.16)';
+    for (let i = 1; i <= 4; i++) {
+      ctx.beginPath();
+      ctx.ellipse(x * size, y * size, r * size * i, r * size * i * 0.36, 0.25, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
+function makeBodyTexture(side) {
+  const size = 512;
   const canvas = document.createElement('canvas');
-  canvas.width = size; canvas.height = size;
+  canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d');
+  drawWoodGrain(ctx, size, side === RED ? '#aa7048' : '#554638', side === RED ? '#754326' : '#2d251f');
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 8;
+  return tex;
+}
 
-  // Ivory background with subtle radial gradient
-  const grad = ctx.createRadialGradient(size/2, size/2, size*0.15, size/2, size/2, size*0.5);
-  grad.addColorStop(0, '#f6e7c6');
-  grad.addColorStop(0.75, '#e6d2a8');
-  grad.addColorStop(1, '#c9b184');
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.arc(size/2, size/2, size/2 - 2, 0, Math.PI*2);
-  ctx.fill();
+function makePlaqueTexture(side, type) {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  drawWoodGrain(ctx, size, '#ecd09d', '#c79a62');
 
-  // Rim ring
-  const rimColor = side === RED ? '#b8342c' : '#2a2a2a';
-  ctx.strokeStyle = rimColor;
-  ctx.lineWidth = 10;
+  const shade = ctx.createRadialGradient(size * 0.42, size * 0.38, 20, size / 2, size / 2, size * 0.5);
+  shade.addColorStop(0, 'rgba(255, 244, 211, 0.24)');
+  shade.addColorStop(0.75, 'rgba(116, 67, 28, 0.03)');
+  shade.addColorStop(1, 'rgba(75, 40, 18, 0.2)');
+  ctx.fillStyle = shade;
+  ctx.fillRect(0, 0, size, size);
+
+  const ink = side === RED ? '#a42e25' : '#24211e';
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 17;
   ctx.beginPath();
-  ctx.arc(size/2, size/2, size/2 - 12, 0, Math.PI*2);
+  ctx.arc(size / 2, size / 2, size * 0.435, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size * 0.355, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Inner ring
-  ctx.strokeStyle = rimColor;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(size/2, size/2, size/2 - 26, 0, Math.PI*2);
-  ctx.stroke();
-
-  // Character. The cylinder top cap's UVs map canvas-up to world +X (screen-right
-  // at the default camera), so draw the glyph rotated 90° anti-clockwise — this
-  // makes it stand upright on screen with its top pointing away from the viewer.
-  const glyph = GLYPHS[side][type];
-  ctx.fillStyle = rimColor;
-  ctx.font = `bold ${Math.floor(size * 0.55)}px "PingFang TC", "Microsoft JhengHei", "Noto Serif TC", serif`;
+  ctx.fillStyle = ink;
+  ctx.shadowColor = 'rgba(48, 24, 12, 0.32)';
+  ctx.shadowOffsetY = 3;
+  ctx.shadowBlur = 2;
+  ctx.font = `bold ${Math.floor(size * 0.5)}px "Kaiti TC", "KaiTi", "Songti TC", "PMingLiU", serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  // Slight shadow for depth
-  ctx.shadowColor = 'rgba(0,0,0,.3)';
-  ctx.shadowBlur = 4;
-  ctx.shadowOffsetY = 2;
   ctx.save();
   ctx.translate(size / 2, size / 2);
-  ctx.rotate(-Math.PI / 2);
-  ctx.fillText(glyph, 0, 6);
+  if (side === BLACK) ctx.rotate(Math.PI);
+  ctx.fillText(GLYPHS[side][type], 0, 8);
   ctx.restore();
   ctx.shadowColor = 'transparent';
 
   const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  textureCache.set(key, tex);
   return tex;
 }
 
-function makeSideTexture(side) {
-  const key = `side-${side}`;
-  if (textureCache.has(key)) return textureCache.get(key);
-  const w = 128, h = 32;
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  const grad = ctx.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0, '#8a6f4a');
-  grad.addColorStop(0.5, '#6a5238');
-  grad.addColorStop(1, '#3e2f20');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, w, h);
-  // Accent stripe
-  ctx.fillStyle = side === RED ? 'rgba(184,52,44,.9)' : 'rgba(40,40,40,.9)';
-  ctx.fillRect(0, h*0.35, w, h*0.3);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  textureCache.set(key, tex);
-  return tex;
-}
-
-const geometryCache = new Map();
-function pieceGeometry() {
-  if (geometryCache.has('disc')) return geometryCache.get('disc');
-  const g = new THREE.CylinderGeometry(PIECE_RADIUS, PIECE_RADIUS * 0.94, PIECE_HEIGHT, 48, 1);
-  // Rotate UVs? Three's CylinderGeometry already produces 3 material groups: side, top, bottom.
-  geometryCache.set('disc', g);
-  return g;
+function materialsFor(side, type) {
+  const key = side + type;
+  let pair = materialCache.get(key);
+  if (pair) return pair;
+  const bodyMap = makeBodyTexture(side);
+  const plaqueMap = makePlaqueTexture(side, type);
+  pair = [
+    new THREE.MeshStandardMaterial({
+      map: bodyMap, bumpMap: bodyMap, bumpScale: 0.012, roughness: 0.58, metalness: 0
+    }),
+    new THREE.MeshStandardMaterial({
+      map: plaqueMap, bumpMap: plaqueMap, bumpScale: 0.006,
+      roughness: 0.5, metalness: 0, side: THREE.DoubleSide
+    })
+  ];
+  materialCache.set(key, pair);
+  return pair;
 }
 
 export function createPieceMesh(side, type) {
-  const geom = pieceGeometry();
-  const sideTex = makeSideTexture(side);
-  const faceTex = makeFaceTexture(side, type);
-  const materials = [
-    new THREE.MeshStandardMaterial({ map: sideTex, roughness: 0.75, metalness: 0.05 }),
-    new THREE.MeshStandardMaterial({ map: faceTex, roughness: 0.55, metalness: 0.05 }),
-    new THREE.MeshStandardMaterial({ color: 0x2a1e12, roughness: 0.85 })
-  ];
-  const mesh = new THREE.Mesh(geom, materials);
+  const mesh = new THREE.Mesh(geometryFor(type), materialsFor(side, type));
   mesh.castShadow = true;
-  mesh.receiveShadow = false;
+  mesh.receiveShadow = true;
+  mesh.rotation.y = side === RED ? 0 : Math.PI;
   mesh.userData.piece = { side, type };
+  mesh.userData.homeYaw = mesh.rotation.y;
   return mesh;
 }
 
-// Highlight ring shown beneath the selected / hinted / last-move pieces.
 export function createHighlightRing(color = 0xf0b429, radius = PIECE_RADIUS * 1.15) {
   const geom = new THREE.RingGeometry(radius, radius + 0.06, 48);
   geom.rotateX(-Math.PI / 2);
@@ -128,7 +173,6 @@ export function createHighlightRing(color = 0xf0b429, radius = PIECE_RADIUS * 1.
   return ring;
 }
 
-// Square marker used to indicate legal move destinations.
 export function createMoveDot(radius = 0.12, capture = false) {
   const geom = capture
     ? new THREE.RingGeometry(PIECE_RADIUS * 0.9, PIECE_RADIUS * 1.05, 40)
@@ -142,4 +186,17 @@ export function createMoveDot(radius = 0.12, capture = false) {
   const dot = new THREE.Mesh(geom, mat);
   dot.renderOrder = 1;
   return dot;
+}
+
+{
+  const red = new THREE.Vector3(0, 0, -1).applyQuaternion(
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0))
+  );
+  const black = new THREE.Vector3(0, 0, -1).applyQuaternion(
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI, 0))
+  );
+  console.assert(red.z < -0.99 && Math.abs(red.x) < 1e-6, 'red front should be world −Z', red);
+  console.assert(black.z > 0.99 && Math.abs(black.x) < 1e-6, 'black front should be world +Z', black);
+  console.assert(Math.abs(yawFacing(0, -1)) < 1e-6, 'yawFacing −Z');
+  console.assert(Math.abs(yawFacing(0, 1) - Math.PI) < 1e-6, 'yawFacing +Z');
 }

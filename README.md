@@ -182,13 +182,13 @@ Files:
   and a **Ladder 天梯** leaderboard panel (top players, your rank highlighted).
 
 ### 3D interaction
-- Flat cylindrical tokens with canvas-rendered Chinese characters (帥/將, 仕/士, 相/象, 傌/馬, …).
-- Wooden board with grid, palaces, river, star points; realistic per-side character orientation.
+- Sculpted piece per type (帥/將, 仕/士, 相/象, 傌/馬, 俥/車, 炮/砲, 兵/卒), each with its own UV texture. Red faces Black; Black faces Red.
+- Wooden camps split by a real river. Edge files cross on bridges. Stone steles read 楚河 and 漢界. Grass, mountains, and old Chinese halls surround the board.
 - **Dual input:** drag-and-drop *and* click-to-move.
 - **Mobile offset:** +0.35 world-unit vertical lift on touch drag so the finger doesn't hide the piece.
 - Camera: elevation slider, drag-to-orbit, wheel/pinch zoom, flip.
 - Flying-general laser warning beam when the two kings would face each other.
-- Animated moves (parabolic hop) and capture fade-out.
+- Animated moves (parabolic hop). Captures play a short effect; a cannon capture fires a shot and blasts the victim. Check calls up a charging army and shouts 將軍 (將死 on checkmate).
 
 ### Persistence & replay
 - Offline matches auto-save to **IndexedDB** and are also pushed to the mock backend
@@ -313,8 +313,9 @@ chinese_chese/
 │   └── js/
 │       ├── main.js           # Bootstrap
 │       ├── scene.js          # Three.js scene, camera, lights, orbit
-│       ├── board.js          # Board geometry + canvas texture
-│       ├── pieces.js         # Flat-token meshes + highlight rings
+│       ├── board.js          # 3D camps, river, bridges, steles
+│       ├── pieces.js         # Per-type sculpted meshes + UV textures
+│       ├── fx.js             # Capture bursts, cannon shot, check army
 │       ├── input.js          # Raycast, drag, click, camera, mobile offset
 │       ├── game.js           # Game controller (offline/online/replay)
 │       ├── ai.js             # Negamax AI (also runs as a Web Worker)
@@ -351,4 +352,4 @@ chinese_chese/
 - Perpetual-check / repetition rules are not enforced.
 - The mock backend stores matches in memory; restarting the server clears them. IndexedDB on the
   client persists offline games across sessions.
-- 3D pieces are flat tokens with characters (per the chosen fidelity), not sculpted figures.
+- Piece models are built in the page (no external meshes) so the characters and the grid scale stay exact.

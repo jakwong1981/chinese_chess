@@ -2,7 +2,9 @@
 // Camera elevation is bound to the #cam-elev slider; azimuth is user-controlled via drag on empty space.
 
 import * as THREE from 'three';
-import { createBoardGroup, BOARD_H, BOARD_W } from './board.js';
+import { createBoardGroup, tickBoard, BOARD_H } from './board.js';
+import { createTeaTable } from './teatable.js';
+import { createFx } from './fx.js';
 
 export class Scene {
   constructor(canvas) {
@@ -16,20 +18,22 @@ export class Scene {
     this.renderer.toneMappingExposure = 1.05;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0b1120);
-    this.scene.fog = new THREE.Fog(0x0b1120, 18, 40);
+    this.scene.background = new THREE.Color(0xdce8e5);
+    this.scene.fog = null;
 
-    this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
-    this.camTarget = new THREE.Vector3(0, 0, 0);
+    this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 300);
+    this.camTarget = new THREE.Vector3(0, 0, -0.8);
     this.camDistance = 13;
     this.camAzimuth = 0;      // radians; 0 = red at bottom
-    this.camElevation = 48;   // degrees
+    this.camElevation = 32;   // seated first-person view from the red side
 
     this._addLights();
-    this._addEnvironment();
 
     this.boardGroup = createBoardGroup();
     this.scene.add(this.boardGroup);
+
+    this.teaTable = createTeaTable();
+    this.scene.add(this.teaTable);
 
     this.pieceLayer = new THREE.Group();
     this.pieceLayer.name = 'pieces';
@@ -42,45 +46,35 @@ export class Scene {
     this.flyingGeneralBeam = this._makeLaserBeam();
     this.scene.add(this.flyingGeneralBeam);
 
+    this.fx = createFx(this.scene);
+
     this._updateCamera();
     this._bindResize();
   }
 
   _addLights() {
-    const ambient = new THREE.AmbientLight(0xffffff, 0.45);
+    const ambient = new THREE.AmbientLight(0xfff6ea, 0.48);
     this.scene.add(ambient);
 
-    const key = new THREE.DirectionalLight(0xfff2d6, 1.15);
-    key.position.set(6, 12, 8);
-    key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
-    key.shadow.camera.left = -8;
-    key.shadow.camera.right = 8;
-    key.shadow.camera.top = 8;
-    key.shadow.camera.bottom = -8;
-    key.shadow.camera.near = 1;
-    key.shadow.camera.far = 30;
-    key.shadow.bias = -0.0005;
-    this.scene.add(key);
+    const hemi = new THREE.HemisphereLight(0xe4edf2, 0x7a6750, 0.62);
+    this.scene.add(hemi);
 
-    const fill = new THREE.DirectionalLight(0x8fb6ff, 0.35);
-    fill.position.set(-6, 8, -4);
-    this.scene.add(fill);
+    const sunlight = new THREE.DirectionalLight(0xfff0d2, 1.45);
+    sunlight.position.set(12, 32, -45);
+    sunlight.castShadow = true;
+    sunlight.shadow.mapSize.set(2048, 2048);
+    sunlight.shadow.camera.left = -30;
+    sunlight.shadow.camera.right = 30;
+    sunlight.shadow.camera.top = 30;
+    sunlight.shadow.camera.bottom = -30;
+    sunlight.shadow.camera.near = 1;
+    sunlight.shadow.camera.far = 120;
+    sunlight.shadow.bias = -0.0005;
+    this.scene.add(sunlight);
 
-    const rim = new THREE.PointLight(0xffb070, 0.6, 20);
-    rim.position.set(0, 4, -8);
-    this.scene.add(rim);
-  }
-
-  _addEnvironment() {
-    // Subtle ground plane to catch shadows beyond the board
-    const g = new THREE.PlaneGeometry(60, 60);
-    g.rotateX(-Math.PI / 2);
-    const m = new THREE.ShadowMaterial({ opacity: 0.28 });
-    const plane = new THREE.Mesh(g, m);
-    plane.position.y = -0.28;
-    plane.receiveShadow = true;
-    this.scene.add(plane);
+    const bounce = new THREE.DirectionalLight(0xc7dcef, 0.28);
+    bounce.position.set(-8, 16, 12);
+    this.scene.add(bounce);
   }
 
   _makeLaserBeam() {
@@ -108,7 +102,7 @@ export class Scene {
     this._updateCamera();
   }
   setDistance(d) {
-    this.camDistance = Math.max(6, Math.min(22, d));
+    this.camDistance = Math.max(6, Math.min(140, d));
     this._updateCamera();
   }
   setAzimuth(rad) {
@@ -146,14 +140,15 @@ export class Scene {
     const h = Math.max(1, host.clientHeight);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
-    // Pull camera back on narrow screens so the whole board fits.
-    const fit = Math.max(BOARD_W + 3, (BOARD_H + 3) / Math.max(0.35, this.camera.aspect * 0.75));
-    this.camDistance = Math.max(9, Math.min(20, fit * 1.05));
+    // Stay at the player's seat; step back slightly on narrow screens so the
+    // whole board remains visible without switching to an overhead camera.
+    this.camDistance = Math.min(60, 13 * Math.max(1, 1.1 / this.camera.aspect));
     this.camera.updateProjectionMatrix();
     this._updateCamera();
   }
 
   render() {
+    tickBoard(this.boardGroup, performance.now() / 1000);
     this.renderer.render(this.scene, this.camera);
   }
 
