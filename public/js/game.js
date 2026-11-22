@@ -40,6 +40,10 @@ export class Game {
     this._hintTimer = null;
     this._hoveredMesh = null;
     this.aiWorker = null;
+    this._aiReqId = 0;
+    this._aiStartedAt = 0;
+    this._aiTimer = null;
+    this._aiThinking = false;
     this.stomp = null;
     this.roomCode = null;
     this.onlineSide = null;
@@ -77,6 +81,7 @@ export class Game {
   }
 
   reset(opts = {}) {
+    this._cancelPendingAI();
     this.mode = opts.mode || 'offline';
     this.humanSide = opts.humanSide || RED;
     this.aiLevel = opts.aiLevel ?? 3;
@@ -414,39 +419,83 @@ export class Game {
   }
 
   // -------- AI --------
+  _cancelPendingAI() {
+    if (this._aiTimer) {
+      clearTimeout(this._aiTimer);
+      this._aiTimer = null;
+    }
+    this._aiReqId++;
+    if (this._aiThinking) {
+      this._aiThinking = false;
+      this.emit('ai-thinking', { active: false });
+    }
+  }
+
   _maybeAIMove() {
     if (this.mode !== 'offline') return;
     if (this.status.over) return;
     if (this.turn === this.humanSide) return;
+    if (this._aiTimer) {
+      clearTimeout(this._aiTimer);
+      this._aiTimer = null;
+    }
+    const reqId = ++this._aiReqId;
+    this._aiStartedAt = performance.now();
     this._interactionEnabled = false;
-    this.emit('ai-thinking', { level: this.aiLevel });
-    const req = { type: 'move', reqId: Date.now(), boardEnc: encodeBoard(this.board), side: this.turn, level: this.aiLevel };
+    this._aiThinking = true;
+    this.emit('ai-thinking', { active: true, side: this.turn, level: this.aiLevel });
+    const req = { type: 'move', reqId, boardEnc: encodeBoard(this.board), side: this.turn, level: this.aiLevel };
     if (this.aiWorker) {
       this.aiWorker.postMessage(req);
     } else {
       // Fallback: import AI lazily on the main thread.
       import('./ai.js').then(({ chooseMove }) => {
+        if (reqId !== this._aiReqId) return;
         const mv = chooseMove(this.board, this.turn, this.aiLevel);
-        this._onWorkerMessage({ type: 'move', reqId: req.reqId, move: mv });
+        this._onWorkerMessage({ type: 'move', reqId, move: mv });
       });
     }
   }
 
   _onWorkerMessage(msg) {
     if (msg.type === 'move') {
-      this._interactionEnabled = true;
-      if (!msg.move) return;
-      // Ensure the move is legal (defensive — AI should never return illegal moves).
-      if (!isLegalMove(this.board, this.turn, msg.move)) {
-        console.warn('AI returned illegal move', msg.move);
-        const legal = legalMoves(this.board, this.turn);
-        if (!legal.length) return;
-        msg.move = legal[0];
-      }
-      this._applyLocalMove(msg.move, this.turn);
+      if (msg.reqId !== this._aiReqId) return; // stale result after undo/reset/resign
+      const reqId = msg.reqId;
+      const cfg = levelConfig(this.aiLevel);
+      const minMs = cfg.minMs ?? 320;
+      const elapsed = performance.now() - this._aiStartedAt;
+      const remain = Math.max(0, minMs - elapsed);
+      const wait = remain > 0 ? Math.round(remain * (0.85 + Math.random() * 0.3)) : 0;
+      const commit = () => {
+        if (reqId !== this._aiReqId) return;
+        this._aiTimer = null;
+        this._aiThinking = false;
+        this.emit('ai-thinking', { active: false });
+        this._interactionEnabled = true;
+        if (this.mode !== 'offline' || this.status.over) return;
+        let move = msg.move;
+        if (!move) return;
+        // Ensure the move is legal (defensive — AI should never return illegal moves).
+        if (!isLegalMove(this.board, this.turn, move)) {
+          console.warn('AI returned illegal move', move);
+          const legal = legalMoves(this.board, this.turn);
+          if (!legal.length) return;
+          move = legal[0];
+        }
+        this._applyLocalMove(move, this.turn);
+      };
+      if (wait > 0) this._aiTimer = setTimeout(commit, wait);
+      else commit();
     } else if (msg.type === 'hint') {
       this._interactionEnabled = true;
       if (msg.move) this.showHintMarker(msg.move);
+    } else if (msg.type === 'error') {
+      console.warn('AI worker reported error:', msg.error);
+      if (msg.reqId === this._aiReqId) {
+        this._aiThinking = false;
+        this.emit('ai-thinking', { active: false });
+        this._interactionEnabled = true;
+      }
     }
   }
 
@@ -456,7 +505,7 @@ export class Game {
       this.emit('toast', { message: 'Wait for your turn', kind: 'warn' });
       return;
     }
-    const req = { type: 'hint', reqId: Date.now(), boardEnc: encodeBoard(this.board), side: this.humanSide };
+    const req = { type: 'hint', reqId: 'hint-' + Date.now(), boardEnc: encodeBoard(this.board), side: this.humanSide };
     if (this.aiWorker) this.aiWorker.postMessage(req);
     else import('./ai.js').then(({ suggestHint }) => {
       const mv = suggestHint(this.board, this.humanSide);
@@ -497,6 +546,7 @@ export class Game {
       this.emit('toast', { message: 'Nothing to undo', kind: 'warn' });
       return;
     }
+    this._cancelPendingAI();
     // Pop until we've removed one of the human's own moves.
     let pops = 0;
     const targetPops = this.history.length >= 2 ? 2 : 1;
@@ -531,6 +581,7 @@ export class Game {
       this.stomp?.send(DEST.resign(this.roomCode), {});
       return;
     }
+    this._cancelPendingAI();
     this.status = { over: true, reason: 'resign', winner: opposite(this.humanSide) };
     this._interactionEnabled = false;
     this.emit('gameover', { winner: this.status.winner, reason: 'resign' });
@@ -563,6 +614,7 @@ export class Game {
   }
 
   _onJoined(payload) {
+    this._cancelPendingAI();
     this.roomCode = payload.roomCode;
     this.onlineSide = payload.side;
     this.onlineRanked = !!payload.ranked;
@@ -676,6 +728,7 @@ export class Game {
 
   // -------- Replay hooks --------
   loadReplay(history) {
+    this._cancelPendingAI();
     this.mode = 'replay';
     this._interactionEnabled = false;
     this.history = history.slice();
@@ -711,6 +764,7 @@ export class Game {
 
   // Fork: take history up to `n` and start a live offline game from there against AI.
   forkAt(n, { aiLevel, humanSide }) {
+    this._cancelPendingAI();
     n = Math.max(0, Math.min(this.history.length, n | 0));
     this.mode = 'offline';
     this.aiLevel = aiLevel ?? this.aiLevel;

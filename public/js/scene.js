@@ -85,8 +85,12 @@ export class Scene {
       requestShadowUpdate: () => this.requestShadowUpdate()
     });
 
-    // Post-processing composer (high-threshold bloom so only HDR FX glow, never wood/pieces)
-    this.composer = new EffectComposer(this.renderer);
+    // Post-processing composer with WebGL2 MSAA so high-quality bloom keeps crisp edges
+    const msaaTarget = new THREE.WebGLRenderTarget(1, 1, {
+      type: THREE.HalfFloatType,
+      samples: this.renderer.capabilities.isWebGL2 ? 4 : 0
+    });
+    this.composer = new EffectComposer(this.renderer, msaaTarget);
     this.renderPass = new RenderPass(this.scene, this.camera);
     this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.22, 0.32, 1.15);
     this.outputPass = new OutputPass();

@@ -44,7 +44,7 @@ A `node:test` unit suite covers the rules engine, the STOMP frame codec, and the
 matchmaking / clock / undo manager:
 
 ```bash
-npm test            # 19 unit tests
+npm test            # 36 unit tests
 npm run test:rules  # extra rules smoke test
 ```
 
@@ -110,7 +110,9 @@ npm start                                   # http://localhost:8080
 # Spring Boot — same port; stop the other backend first, Postgres must be up
 cd server-java && ./mvnw spring-boot:run    # http://localhost:8080
 
-# Side-by-side A/B via Docker (Java on 8081; Postgres starts automatically)
+# Side-by-side A/B via Docker (Java on https://localhost:8081, self-signed;
+# Postgres starts automatically). Provision the TLS pair first.
+bash deploy/ensure-certs.sh
 docker compose -f deploy/docker-compose.yml up -d --build xq_backend_java
 ```
 
@@ -143,12 +145,31 @@ bash deploy/deploy.sh --skip-tests  # deploy without the gate (not recommended)
 What `deploy/deploy.sh` does, in order:
 
 1. **Unit-test gate** — aborts on any failing test.
-2. Installs Docker, UFW (allows 22/80/443) and Certbot (Ubuntu 22.04/24.04).
+2. Installs Docker and UFW (allows 22/80/443) on Ubuntu 22.04/24.04.
 3. Creates `deploy/.env` from `deploy/.env.example` if missing (edit the placeholders).
-4. `docker compose up -d --build` → services `xq_postgres`, `xq_redis`, `xq_backend`.
-5. Installs the Nginx site (`deploy/nginx/xiangqi.conf`) with SSL termination and
-   `proxy_set_header Upgrade $http_upgrade;` for the `/ws` WebSocket route.
-6. Requests a Let's Encrypt certificate when `DOMAIN` is set to a real domain.
+4. Ensures the self-signed TLS pair (`deploy/ensure-certs.sh` → `deploy/certs/`).
+5. `docker compose up -d --build` → services `xq_postgres`, `xq_redis`, `xq_backend`
+   (plus `xq_backend_java`, which serves its own HTTPS on container port 8080).
+   When `EXTERNAL_PROXY_NET` is set, `deploy/docker-compose.external-proxy.yml`
+   also attaches `xq_backend_java` to the shared proxy docker network.
+
+### Public HTTPS (chinese.jackstudio.app)
+
+Same pattern as hk-live-dashboard and bill-tracker: the public edge is
+**hobbyland's caddy** (it owns ports 80/443 on the VPS). Its Caddyfile has a
+`chinese.jackstudio.app` block that reverse-proxies to this app's own
+self-signed TLS at `https://xiangqi-app:8080` over the `shared-proxy` docker
+network (`tls_insecure_skip_verify`). The `/ws` STOMP WebSocket is upgraded
+transparently; the frontend picks `wss://` automatically when served over HTTPS.
+
+One-time VPS setup:
+
+```bash
+docker network create shared-proxy          # if it doesn't exist yet
+# deploy/.env: EXTERNAL_PROXY_NET=shared-proxy
+bash deploy/deploy.sh --java
+# then reload hobbyland's caddy so it picks up the new Caddyfile block
+```
 
 Files:
 
@@ -156,8 +177,9 @@ Files:
 | ----------------------------- | ----------------------------------------- |
 | `deploy/Dockerfile`           | Multi-target image: `node-runtime` (default) + `java-runtime` |
 | `deploy/docker-compose.yml`   | `xq_postgres`, `xq_redis`, `xq_backend`, `xq_backend_java` |
-| `deploy/nginx/xiangqi.conf`   | Reverse proxy + WebSocket upgrade + TLS   |
-| `deploy/.env.example`         | Credentials / domain template             |
+| `deploy/docker-compose.external-proxy.yml` | Attaches `xq_backend_java` to the shared proxy network |
+| `deploy/ensure-certs.sh`      | Self-signed TLS provisioning (`deploy/certs/`, gitignored) |
+| `deploy/.env.example`         | Credentials / domain / proxy-network template |
 | `deploy/deploy.sh`            | Test-gated deployment runbook (`--java` for Spring Boot) |
 
 ---
@@ -166,8 +188,9 @@ Files:
 
 ### Game modes
 - **Solo vs AI (offline):** 10-tier AI (Lv 1 入門 → Lv 10 棋聖) running in a Web Worker.
-  Negamax + alpha-beta, MVV-LVA move ordering, material + piece-square evaluation, per-level
-  blunder probability and time budget. Unrestricted 2-ply undo and move hints.
+  Iterative-deepening negamax + alpha-beta, 64-bit Zobrist transposition table, quiescence
+  search, TT/MVV-LVA/killer/history ordering, minimum thinking pacing with breathing HUD
+  indicator, per-level blunder probability and time budget. Unrestricted 2-ply undo and move hints.
   See [Solo play vs AI: level design](#solo-play-vs-ai-level-design-lv-110) for the full breakdown.
 - **Online (mock):** STOMP-over-WebSocket quick match, private room codes, server-authoritative
   move validation, Fischer increment clocks, 15-second consensual undo (casual rooms).
@@ -183,7 +206,7 @@ Files:
 
 ### 3D interaction
 - Sculpted piece per type (帥/將, 仕/士, 相/象, 傌/馬, 俥/車, 炮/砲, 兵/卒), each with its own UV texture. Red faces Black; Black faces Red.
-- Wooden camps split by a real river. Edge files cross on bridges. Stone steles read 楚河 and 漢界. Grass, mountains, and old Chinese halls surround the board.
+- Wooden camps split by a real river, rendered with high-resolution (2048×1024) wood-and-ink board textures (16× anisotropic filtering, mipmaps, traditional double border and L-shaped star markers) and WebGL2 4× MSAA post-processing for razor-sharp grid lines at oblique camera angles. Edge files cross on bridges; stone steles read 楚河 and 漢界.
 - **Dual input:** drag-and-drop *and* click-to-move.
 - **Mobile offset:** +0.35 world-unit vertical lift on touch drag so the finger doesn't hide the piece.
 - Camera: elevation slider, drag-to-orbit, wheel/pinch zoom, flip.
@@ -212,42 +235,51 @@ running on the main thread.
 
 ### Engine
 
-- **Search:** negamax with alpha-beta pruning, fixed depth per level, one hard time budget per
-  move. If the deadline fires mid-search, that move falls back to a shallow static evaluation
-  instead of aborting the turn.
-- **Move ordering:** MVV-LVA — captures are searched first, scored as
-  `victim value × 10 − attacker value`, so cheap pieces taking valuable ones get priority.
+- **Fast rules path:** in-place `makeMove()`/`unmakeMove()` (zero per-node 90-cell array
+  allocations) plus ray-probing `isKingAttackedAt()` in [`shared/rules.js`](./shared/rules.js).
+- **Iterative deepening + transposition table:** negamax with alpha-beta pruning, aspiration
+  windows, and a 64-bit Zobrist transposition table (generation-aged typed arrays with
+  mate-distance normalization). Completed depths are kept if the hard time budget expires.
+- **Quiescence search:** at depth 0, searches captures (with delta pruning) and forced check
+  evasions up to `qDepth` plies so the engine avoids horizon-effect blunders.
+- **Move ordering:** TT best move → captures (MVV-LVA: `victim × 10 − attacker`) → 2 killer
+  moves per ply → history heuristic.
 - **Evaluation:** material + piece-square tables (from [`shared/rules.js`](./shared/rules.js)):
   車 R=900, 炮 C=450, 馬 H=400, 仕/士 A=200, 相/象 E=200, 兵/卒 P=100, 帥/將 K=10000. PSTs for
   pawns, horses, rooks and cannons reward crossing the river, central files and developed
   squares; tables are written from Red's perspective and mirrored for Black.
 - **Terminal:** checkmate *and* stalemate both lose for the side to move (Xiangqi rules), with a
-  mate-distance bias (`-99999 + ply`) so faster mates are preferred over slower ones.
+  mate-distance bias (`-30000 + ply`) so faster mates are preferred over slower ones.
+- **Thinking pacing & HUD indicator:** each level enforces a minimum thinking delay (`minMs`,
+  ±15% natural jitter) so fast replies never feel robotic; while thinking, the AI's player
+  scroll card and turn banner (`AI 思考中 · Lv X`) show a breathing golden glow (degrades
+  gracefully under `prefers-reduced-motion`). Pending AI timers and stale worker responses are
+  cancelled immediately on undo, reset, resign, or mode switch.
 
 ### The ten levels
 
-Difficulty scales along four knobs — **search depth**, **blunder probability**, **score jitter**
-and **think time**:
+Difficulty scales along **max depth**, **quiescence depth**, **blunder probability**, **score
+jitter**, **max think time**, and **minimum pacing delay**:
 
-| Lv | Title               | Depth | Blunder | Jitter | Think time |
-| -- | ------------------- | ----- | ------- | ------ | ---------- |
-| 1  | 入門 Novice          | 1 ply | 40%     | 0.55   | 250 ms     |
-| 2  | 初學 Beginner        | 1 ply | 30%     | 0.40   | 400 ms     |
-| 3  | 業餘 Amateur         | 2 ply | 22%     | 0.28   | 600 ms     |
-| 4  | 熟手 Intermediate    | 2 ply | 15%     | 0.20   | 800 ms     |
-| 5  | 好手 Skilled         | 3 ply | 10%     | 0.14   | 1.1 s      |
-| 6  | 高手 Advanced        | 3 ply | 6%      | 0.09   | 1.4 s      |
-| 7  | 名家 Expert          | 3 ply | 3%      | 0.05   | 1.8 s      |
-| 8  | 大師 Master          | 4 ply | 1.5%    | 0.03   | 2.4 s      |
-| 9  | 特級大師 Grandmaster  | 4 ply | 0.5%    | 0.015  | 3.2 s      |
-| 10 | 棋聖 Chess Sage      | 5 ply | 0%      | 0.005  | 4.5 s      |
+| Lv | Title               | Max Depth | Q-Depth | Blunder | Jitter | Max Time | Min Think |
+| -- | ------------------- | --------- | ------- | ------- | ------ | -------- | --------- |
+| 1  | 入門 Novice          | 1 ply     | 2       | 40%     | 0.55   | 250 ms   | 320 ms    |
+| 2  | 初學 Beginner        | 1 ply     | 2       | 30%     | 0.40   | 400 ms   | 320 ms    |
+| 3  | 業餘 Amateur         | 2 ply     | 2       | 22%     | 0.28   | 600 ms   | 320 ms    |
+| 4  | 熟手 Intermediate    | 2 ply     | 2       | 15%     | 0.20   | 800 ms   | 450 ms    |
+| 5  | 好手 Skilled         | 3 ply     | 4       | 10%     | 0.14   | 1.1 s    | 450 ms    |
+| 6  | 高手 Advanced        | 3 ply     | 4       | 6%      | 0.09   | 1.4 s    | 450 ms    |
+| 7  | 名家 Expert          | 4 ply     | 4       | 3%      | 0.05   | 1.8 s    | 600 ms    |
+| 8  | 大師 Master          | 4 ply     | 6       | 1.5%    | 0.03   | 2.4 s    | 600 ms    |
+| 9  | 特級大師 Grandmaster  | 5 ply     | 6       | 0.5%    | 0.015  | 3.2 s    | 600 ms    |
+| 10 | 棋聖 Chess Sage      | 6 ply     | 6       | 0%      | 0.005  | 4.5 s    | 600 ms    |
 
 - **Blunder injection:** with the listed probability the AI deliberately discards its analysis
   and plays a *random legal move*. This is what makes Lv 1–4 feel human and beatable instead of
   merely shallow.
-- **Jitter:** every root move's score gets noise in the range ±(jitter × 30) points, so evenly
-  matched positions don't repeat the same game every time. High levels are nearly deterministic.
-- **Tie-breaking:** moves scoring within epsilon of the best are picked uniformly at random.
+- **Jitter:** root moves within the jitter band (`jitter × 60` points) receive small random
+  noise so evenly matched positions don't repeat the same game every time. High levels are
+  nearly deterministic.
 
 ### Human-side assists
 
@@ -346,9 +378,9 @@ chinese_chese/
 
 ## Notes & known limitations (MVP)
 
-- The AI is intentionally **minimal** (negamax, depth ≤ 5, heuristic eval). It is not the
-  16-ply grandmaster engine described in the spec; it is strong enough to play a real game and
-  finds basic tactics (e.g. cannon screens).
+- The AI uses iterative-deepening negamax (depth ≤ 6 + quiescence + Zobrist TT, heuristic
+  eval). It is not a 16-ply NNUE engine, but it plays sharp tactical games without obvious
+  horizon blunders.
 - Perpetual-check / repetition rules are not enforced.
 - The mock backend stores matches in memory; restarting the server clears them. IndexedDB on the
   client persists offline games across sessions.

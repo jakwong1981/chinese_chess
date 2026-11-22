@@ -66,10 +66,18 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
       target: java-runtime
+    # Stable DNS name for hobbyland's caddy (chinese.jackstudio.app →
+    # https://xiangqi-app:8080 over the shared-proxy network).
+    container_name: xiangqi-app
     restart: unless-stopped
     environment:
       PORT: "8080"
       XQ_STATIC_ROOT: /app/static
+      # App-served self-signed TLS (deploy/ensure-certs.sh provisions the pair).
+      # Override with HTTPS=false in the caller environment or deploy/.env.
+      HTTPS: ${HTTPS:-true}
+      SSL_CERT_PATH: /certs/cert.pem
+      SSL_KEY_PATH: /certs/key.pem
       SPRING_DATASOURCE_URL: jdbc:postgresql://xq_postgres:5432/${POSTGRES_DB:-xiangqi}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-xiangqi}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-xiangqi}
@@ -77,7 +85,11 @@ services:
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD:-xiangqi}
     ports:
-      - "${BACKEND_PORT_JAVA:-8081}:8080"
+      # Loopback-only: public traffic arrives via hobbyland's caddy over the
+      # shared-proxy docker network, never through this host port.
+      - "127.0.0.1:${BACKEND_PORT_JAVA:-8081}:8080"
+    volumes:
+      - ./certs:/certs:ro
     depends_on:
       xq_postgres:
         condition: service_healthy

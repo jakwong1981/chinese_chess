@@ -217,14 +217,18 @@ export class UI {
     g.on('room-joined', (p) => this.onRoomJoined(p));
     g.on('opponent', (p) => this.updateOpponentName(p));
     g.on('ratings', ({ ratings, ranked }) => this.updateRatings(ratings, ranked));
-    g.on('gameover', (r) => this.showGameOver(r));
+    g.on('gameover', (r) => {
+      this.setAIThinking({ active: false });
+      this.showGameOver(r);
+    });
     g.on('undo-request', (r) => this.showUndoModal(r));
-    g.on('ai-thinking', () => this.toast('AI thinking…', 'info', 900));
+    g.on('ai-thinking', (state) => this.setAIThinking(state));
     g.on('replay-index', ({ index, total }) => {
       const scrub = $('#rp-scrub');
       if (scrub) { scrub.max = total; scrub.value = index; }
     });
     g.on('reset', () => {
+      this.setAIThinking({ active: false });
       this.el.overlay.classList.add('hidden');
       this.el.replayControls.classList.add('hidden');
       this.replayCtl?.stop();
@@ -241,7 +245,6 @@ export class UI {
       humanSide: this.humanSide,
       aiLevel: Number(this.el.aiLevel.value || 3)
     });
-    this.updateTurn(this.game.turn, false);
   }
 
   confirmResign() {
@@ -333,13 +336,37 @@ export class UI {
     this.el.onlineStatus.className = 'status' + (cls ? ' ' + cls : '');
   }
 
+  setAIThinking({ active, side, level } = {}) {
+    this.el.playerRed?.classList.remove('thinking');
+    this.el.playerBlack?.classList.remove('thinking');
+    this.el.turnBanner?.classList.remove('thinking');
+    if (active) {
+      const card = side === RED ? this.el.playerRed : this.el.playerBlack;
+      card?.classList.add('thinking');
+      if (this.el.turnBanner) {
+        const lv = level ?? this.game.aiLevel;
+        this.el.turnBanner.textContent = `AI 思考中 · Lv ${lv}`;
+        this.el.turnBanner.classList.add('thinking');
+        this.el.turnBanner.setAttribute('aria-busy', 'true');
+      }
+    } else if (this.el.turnBanner) {
+      this.el.turnBanner.removeAttribute('aria-busy');
+    }
+  }
+
   updateTurn(turn, inCheck) {
     const red = turn === RED;
-    this.el.turnBanner.textContent = `${red ? 'Red 紅' : 'Black 黑'} to move${inCheck ? ' — CHECK' : ''}`;
-    this.el.turnBanner.classList.toggle('red', red);
-    this.el.turnBanner.classList.toggle('black', !red);
     this.el.playerRed.classList.toggle('active', red);
     this.el.playerBlack.classList.toggle('active', !red);
+    this.el.turnBanner.classList.toggle('red', red);
+    this.el.turnBanner.classList.toggle('black', !red);
+    if (!this.game._aiThinking) {
+      this.el.playerRed.classList.remove('thinking');
+      this.el.playerBlack.classList.remove('thinking');
+      this.el.turnBanner.classList.remove('thinking');
+      this.el.turnBanner.removeAttribute('aria-busy');
+      this.el.turnBanner.textContent = `${red ? 'Red 紅' : 'Black 黑'} to move${inCheck ? ' — CHECK' : ''}`;
+    }
   }
 
   updateClocks(clocks) {

@@ -1,0 +1,14 @@
+# Attach the Java backend to an external reverse proxy's Docker network so
+# hobbyland's caddy can reach it (chinese.jackstudio.app → xiangqi-app:8080).
+# Never loaded on its own: deploy/deploy.sh adds it as a second -f when
+# EXTERNAL_PROXY_NET is set, e.g. EXTERNAL_PROXY_NET=shared-proxy.
+services:
+  xq_backend_java:
+    networks:
+      - default
+      - shared-proxy
+
+networks:
+  shared-proxy:
+    external: true
+    name: ${EXTERNAL_PROXY_NET:?EXTERNAL_PROXY_NET must be set when using docker-compose.external-proxy.yml}

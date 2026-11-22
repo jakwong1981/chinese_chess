@@ -10,6 +10,9 @@
 #
 # The script is idempotent and non-destructive: it never deletes data volumes and
 # never restarts services that are already healthy.
+#
+# Public HTTPS: hobbyland's caddy proxies chinese.jackstudio.app to the Java
+# backend's own self-signed TLS over the shared-proxy docker network.
 
 set -euo pipefail
 
@@ -27,7 +30,7 @@ for arg in "$@"; do
     --skip-tests) SKIP_TESTS=1 ;;
     --local)      LOCAL_MODE=1 ;;
     --java)       JAVA_MODE=1 ;;
-    -h|--help)    sed -n '2,14p' "$0"; exit 0 ;;
+    -h|--help)    sed -n '2,15p' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -139,7 +142,8 @@ else
   log "Docker daemon is running."
 fi
 
-# UFW, Certbot, and system Nginx are Linux-only
+# UFW is Linux-only. Ports 80/443 stay with the external reverse proxy
+# (hobbyland's caddy); no system Nginx or Certbot is installed here.
 if [ "$IS_MACOS" -eq 0 ]; then
   if ! command -v ufw >/dev/null 2>&1; then
     log "Installing UFW..."
@@ -150,13 +154,6 @@ if [ "$IS_MACOS" -eq 0 ]; then
   run $SUDO ufw allow 80/tcp
   run $SUDO ufw allow 443/tcp
   run $SUDO ufw --force enable || warn "UFW enable skipped (dry-run or already active)."
-
-  if ! command -v certbot >/dev/null 2>&1; then
-    log "Installing Certbot..."
-    run $SUDO apt-get install -y certbot python3-certbot-nginx
-  else
-    log "Certbot already installed."
-  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -179,13 +176,39 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 3 — Build & start the stack.
+# Step 3 — TLS material + compose file selection.
+# ---------------------------------------------------------------------------
+# The Java backend serves its own self-signed HTTPS; the public edge is
+# hobbyland's caddy (chinese.jackstudio.app), which proxies over the shared
+# docker network with tls_insecure_skip_verify.
+if [ "${HTTPS:-true}" = "true" ]; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "DRY-RUN: would ensure self-signed TLS pair via $DEPLOY_DIR/ensure-certs.sh"
+  else
+    bash "$DEPLOY_DIR/ensure-certs.sh"
+  fi
+else
+  warn "HTTPS=false: the Java backend will serve plain HTTP (local A/B only)."
+fi
+
+COMPOSE_ARGS=(-f "$DEPLOY_DIR/docker-compose.yml")
+if [ -n "${EXTERNAL_PROXY_NET:-}" ]; then
+  COMPOSE_ARGS+=(-f "$DEPLOY_DIR/docker-compose.external-proxy.yml")
+  log "EXTERNAL_PROXY_NET=$EXTERNAL_PROXY_NET: attaching xq_backend_java via docker-compose.external-proxy.yml"
+else
+  warn "EXTERNAL_PROXY_NET is not set — the app stays off the shared proxy network."
+  warn "For public HTTPS, set it in $ENV_FILE (e.g. shared-proxy) and add the"
+  warn "chinese.jackstudio.app block to hobbyland's Caddyfile."
+fi
+
+# ---------------------------------------------------------------------------
+# Step 4 — Build & start the stack.
 # ---------------------------------------------------------------------------
 log "Checking for existing containers..."
 # Check if containers already exist and remove them for a clean reinstall
-if docker compose -f "$DEPLOY_DIR/docker-compose.yml" ps -q 2>/dev/null | grep -q .; then
+if docker compose "${COMPOSE_ARGS[@]}" ps -q 2>/dev/null | grep -q .; then
   warn "Existing containers found. Removing for clean reinstall..."
-  run docker compose -f "$DEPLOY_DIR/docker-compose.yml" down --remove-orphans
+  run docker compose "${COMPOSE_ARGS[@]}" down --remove-orphans
   log "Old containers removed."
 else
   log "No existing containers found."
@@ -193,52 +216,19 @@ fi
 
 if [ "$JAVA_MODE" -eq 1 ]; then
   log "Building and starting the Spring Boot backend (xq_backend_java)..."
-  run docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" up -d --build xq_backend_java
+  run docker compose "${COMPOSE_ARGS[@]}" --env-file "$ENV_FILE" up -d --build xq_backend_java
 else
   log "Building and starting containers (xq_postgres, xq_redis, xq_backend)..."
-  run docker compose -f "$DEPLOY_DIR/docker-compose.yml" --env-file "$ENV_FILE" up -d --build
+  run docker compose "${COMPOSE_ARGS[@]}" --env-file "$ENV_FILE" up -d --build
 fi
-run docker compose -f "$DEPLOY_DIR/docker-compose.yml" ps
-
-# ---------------------------------------------------------------------------
-# Step 4 — Nginx reverse proxy with WebSocket upgrade (Linux only).
-# ---------------------------------------------------------------------------
-if [ "$IS_MACOS" -eq 0 ]; then
-  log "Installing Nginx site config..."
-  NGINX_CONF_SRC="$DEPLOY_DIR/nginx/xiangqi.conf"
-  NGINX_CONF_DST="/etc/nginx/sites-available/xiangqi"
-  DOMAIN="${DOMAIN:-example.com}"
-  if [ "$DRY_RUN" -eq 1 ]; then
-    log "DRY-RUN: would install $NGINX_CONF_DST (server_name $DOMAIN)"
-  else
-    $SUDO mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/certbot
-    # Substitute the placeholder domain into a temp copy, then install.
-    sed "s/example\.com/${DOMAIN}/g" "$NGINX_CONF_SRC" > /tmp/xiangqi.conf
-    $SUDO cp /tmp/xiangqi.conf "$NGINX_CONF_DST"
-    $SUDO ln -sf "$NGINX_CONF_DST" /etc/nginx/sites-enabled/xiangqi
-    $SUDO nginx -t && $SUDO systemctl reload nginx
-    log "Nginx configured for $DOMAIN with WebSocket upgrade on /ws."
-  fi
-else
-  warn "Skipping system Nginx setup on macOS. Docker containers handle proxying."
-fi
-
-# ---------------------------------------------------------------------------
-# Step 5 — TLS certificate (optional; requires a real DOMAIN + DNS, Linux only).
-# ---------------------------------------------------------------------------
-if [ "$IS_MACOS" -eq 0 ] && [ "${DOMAIN:-example.com}" != "example.com" ]; then
-  log "Requesting TLS certificate for $DOMAIN..."
-  run $SUDO certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos \
-      -m "${CERTBOT_EMAIL:-admin@example.com}" --redirect
-elif [ "$IS_MACOS" -eq 0 ]; then
-  warn "DOMAIN is still the placeholder; skipping Certbot. Set DOMAIN in $ENV_FILE and re-run."
-fi
+run docker compose "${COMPOSE_ARGS[@]}" ps
 
 log "Deployment complete."
 if [ "$JAVA_MODE" -eq 1 ]; then
-  log "App (Java): http://localhost:${BACKEND_PORT_JAVA:-8081}/  (or https://${DOMAIN:-example.com})"
-  log "WebSocket:  ws://localhost:${BACKEND_PORT_JAVA:-8081}/ws"
+  log "App (Java): https://localhost:${BACKEND_PORT_JAVA:-8081}/  (self-signed; curl -k)"
+  log "Public:     https://${DOMAIN:-chinese.jackstudio.app}/  (via hobbyland's caddy)"
+  log "WebSocket:  wss://${DOMAIN:-chinese.jackstudio.app}/ws"
 else
-  log "App:      http://localhost:${BACKEND_PORT:-8080}/  (or https://${DOMAIN:-example.com})"
-  log "WebSocket: ws://localhost:${BACKEND_PORT:-8080}/ws"
+  log "App:      http://localhost:${BACKEND_PORT:-8080}/  (Node mock, plain HTTP)"
+  log "Public:     https://${DOMAIN:-chinese.jackstudio.app}/  (Java backend via hobbyland's caddy)"
 fi

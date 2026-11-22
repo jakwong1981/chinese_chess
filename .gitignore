@@ -9,3 +9,4 @@ build/
 data/
 .qoder/
 server-java/target/
+deploy/certs/

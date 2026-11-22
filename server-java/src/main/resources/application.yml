@@ -1,6 +1,13 @@
 server:
   port: ${PORT:8080}
   address: ${HOST:0.0.0.0}
+  # App-served self-signed TLS for the hop from the public edge (hobbyland's
+  # caddy, chinese.jackstudio.app). Off by default so local runs stay http;
+  # the compose stack sets HTTPS=true and mounts the cert pair at /certs.
+  ssl:
+    enabled: ${HTTPS:false}
+    certificate: ${SSL_CERT_PATH:}
+    certificate-private-key: ${SSL_KEY_PATH:}
 
 spring:
   application:

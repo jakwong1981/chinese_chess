@@ -8,8 +8,14 @@ import {
   RED, BLACK, opposite,
   initialBoard, encodeBoard, decodeBoard,
   legalMoves, applyMove, isLegalMove, gameStatus, isInCheck, kingsFacing,
-  idx, xy, pieceMoves, evaluate, findKing
+  idx, xy, pieceMoves, evaluate, findKing,
+  isSquareAttacked, isKingAttacked, makeMove, unmakeMove
 } from '../shared/rules.js';
+
+import {
+  LEVELS, levelConfig, chooseMove, searchPosition,
+  zobristHash, debugVerifyZobrist, resetSearchState
+} from '../public/js/ai.js';
 
 import { parseFrame, serializeFrame } from '../server/stomp.js';
 import { RoomManager } from '../server/rooms.js';
@@ -113,6 +119,219 @@ test('random self-play never produces an illegal state', () => {
     assert.ok(findKing(b, RED) >= 0);
     assert.ok(findKing(b, BLACK) >= 0);
     assert.ok(!kingsFacing(b));
+  }
+});
+
+// --------------------------------------------------------- fast paths / AI ----
+
+/** Deterministic PRNG so any failure is reproducible. */
+function rng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Random legal walk; returns every position it visits. */
+function randomPositions(plies, rand) {
+  let board = initialBoard();
+  let side = RED;
+  const seen = [{ board, side }];
+  for (let i = 0; i < plies; i++) {
+    const ms = legalMoves(board, side);
+    if (!ms.length) break;
+    board = applyMove(board, ms[(rand() * ms.length) | 0]);
+    side = opposite(side);
+    seen.push({ board, side });
+  }
+  return seen;
+}
+
+function sparseBoard(pieces) {
+  const board = new Array(90).fill(null);
+  let id = 1;
+  for (const [side, type, x, y] of pieces) board[idx(x, y)] = { side, type, id: id++ };
+  return board;
+}
+
+test('isKingAttacked agrees with isSquareAttacked over a long random walk', () => {
+  const rand = rng(12345);
+  let checked = 0;
+  for (const { board } of randomPositions(220, rand)) {
+    for (const side of [RED, BLACK]) {
+      const k = findKing(board, side);
+      if (k < 0) continue;
+      const [kx, ky] = xy(k);
+      assert.equal(
+        isKingAttacked(board, side),
+        isSquareAttacked(board, kx, ky, opposite(side)),
+        `mismatch for ${side} king at ${kx},${ky}`
+      );
+      checked++;
+    }
+  }
+  assert.ok(checked > 200, `expected hundreds of probes, ran ${checked}`);
+});
+
+test('isKingAttacked sees every attacking piece type', () => {
+  // Red king on its home square, one black attacker placed in range each time.
+  // The black king sits off-file so the flying-general rule never masks a failure.
+  const cases = [
+    [['R', 4, 5], true],   // rook down the file
+    [['R', 3, 0], true],   // rook along the rank
+    [['C', 4, 5], false],  // cannon with no screen
+    [['H', 3, 2], true],   // horse
+    [['P', 4, 1], true],   // pawn pushing forward
+    [['P', 4, 2], false]   // pawn two ranks away
+  ];
+  for (const [[type, x, y], expected] of cases) {
+    const board = sparseBoard([[RED, 'K', 4, 0], [BLACK, 'K', 5, 9], [BLACK, type, x, y]]);
+    assert.equal(isKingAttacked(board, RED), expected, `${type} at ${x},${y}`);
+  }
+  // Cannon needs exactly one screen.
+  const screened = sparseBoard([
+    [RED, 'K', 4, 0], [BLACK, 'K', 5, 9], [BLACK, 'C', 4, 6], [BLACK, 'P', 4, 3]
+  ]);
+  assert.equal(isKingAttacked(screened, RED), true);
+  // A horse with its leg blocked does not attack.
+  const legBlocked = sparseBoard([
+    [RED, 'K', 4, 0], [BLACK, 'K', 5, 9], [BLACK, 'H', 3, 2], [RED, 'P', 3, 1]
+  ]);
+  assert.equal(isKingAttacked(legBlocked, RED), false);
+  // Flying general: bare kings on the same file attack each other.
+  const facing = sparseBoard([[RED, 'K', 4, 0], [BLACK, 'K', 4, 9]]);
+  assert.equal(isKingAttacked(facing, RED), true);
+  assert.equal(isKingAttacked(facing, BLACK), true);
+});
+
+test('makeMove/unmakeMove matches applyMove and restores the board exactly', () => {
+  const rand = rng(999);
+  let compared = 0;
+  for (const { board, side } of randomPositions(40, rand)) {
+    for (const mv of legalMoves(board, side)) {
+      const work = board.slice();
+      const undo = makeMove(work, mv.fromX, mv.fromY, mv.toX, mv.toY);
+      const immutable = applyMove(board, mv);
+      for (let i = 0; i < 90; i++) {
+        const a = work[i];
+        const b = immutable[i];
+        assert.equal(a ? a.side + a.type : null, b ? b.side + b.type : null, `square ${i}`);
+      }
+      unmakeMove(work, undo);
+      for (let i = 0; i < 90; i++) assert.equal(work[i], board[i], `restore square ${i}`);
+      compared++;
+    }
+  }
+  assert.ok(compared > 500, `expected hundreds of moves, ran ${compared}`);
+});
+
+test('incremental Zobrist hash stays in sync with a full recompute', () => {
+  const rand = rng(4242);
+  for (const { board, side } of randomPositions(8, rand)) {
+    assert.equal(debugVerifyZobrist(board, side, 40), 0);
+  }
+  // Hash must distinguish positions but ignore piece identity ordering.
+  const a = initialBoard();
+  const moved = applyMove(a, legalMoves(a, RED)[0]);
+  assert.notDeepEqual(zobristHash(a), zobristHash(moved));
+});
+
+test('AI plays a legal move at every difficulty level', () => {
+  resetSearchState();
+  let board = initialBoard();
+  let side = RED;
+  for (let lv = 1; lv <= LEVELS.length; lv++) {
+    const res = searchPosition(board, side, lv);
+    assert.ok(res && res.move, `level ${lv} returned no move`);
+    assert.ok(isLegalMove(board, side, res.move), `level ${lv} returned an illegal move`);
+    assert.ok(res.depth >= 1, `level ${lv} did not complete depth 1`);
+    board = applyMove(board, res.move);
+    side = opposite(side);
+  }
+  // Out-of-range levels clamp instead of throwing.
+  assert.equal(levelConfig(0).lv, 1);
+  assert.equal(levelConfig(99).lv, LEVELS.length);
+});
+
+test('AI takes a free rook', () => {
+  resetSearchState();
+  const board = sparseBoard([
+    [RED, 'K', 3, 0], [BLACK, 'K', 4, 9],
+    [RED, 'R', 0, 5], [BLACK, 'R', 8, 5]
+  ]);
+  // Level 10 has no deliberate-blunder chance, so the assertion is deterministic.
+  const res = searchPosition(board, RED, 10);
+  assert.ok(res && res.move);
+  assert.deepEqual([res.move.fromX, res.move.fromY, res.move.toX, res.move.toY], [0, 5, 8, 5]);
+  assert.ok(res.score > 500, `expected a big score, got ${res.score}`);
+});
+
+test('AI finds a mate in one', () => {
+  resetSearchState();
+  // Horse check on the black king; both flight squares are covered by red pawns.
+  const board = sparseBoard([
+    [RED, 'K', 3, 0], [BLACK, 'K', 4, 9],
+    [RED, 'H', 4, 5], [RED, 'P', 3, 8], [RED, 'P', 5, 8]
+  ]);
+  assert.equal(isInCheck(board, BLACK), false);
+  const res = searchPosition(board, RED, 10);
+  assert.ok(res && res.move);
+  assert.ok(res.score > 29000, `expected a mate score, got ${res.score}`);
+  const after = applyMove(board, res.move);
+  const status = gameStatus(after, BLACK);
+  // Xiangqi counts stalemate as a loss too, so accept either finish.
+  assert.equal(status.over, true, `expected a won position, got ${JSON.stringify(status)}`);
+  assert.equal(status.winner, RED);
+});
+
+test('AI respects its time budget', () => {
+  resetSearchState();
+  const board = initialBoard();
+  const t0 = Date.now();
+  const res = searchPosition(board, RED, 1);
+  const elapsed = Date.now() - t0;
+  assert.ok(res && res.move);
+  assert.ok(elapsed < 2000, `level 1 took ${elapsed}ms`);
+  assert.ok(chooseMove(board, RED, 3), 'chooseMove returned nothing');
+});
+
+test('quiescence avoids blundering a rook into a defended pawn', () => {
+  resetSearchState();
+  // Red rook at (0,5) can capture a poisoned black pawn at (0,7) defended by black rook at (8,7),
+  // or capture a free black horse at (5,5). Quiescence must see the recapture and avoid (0,7).
+  const board = sparseBoard([
+    [RED, 'K', 4, 0], [BLACK, 'K', 3, 9], [BLACK, 'A', 4, 8],
+    [RED, 'R', 0, 5],
+    [BLACK, 'P', 0, 7], [BLACK, 'R', 8, 7], [BLACK, 'P', 3, 7],
+    [BLACK, 'H', 5, 5]
+  ]);
+  const res = searchPosition(board, RED, 10);
+  assert.ok(res && res.move);
+  assert.notDeepEqual([res.move.toX, res.move.toY], [0, 7], 'AI blundered rook into defended pawn');
+  assert.deepEqual([res.move.fromX, res.move.fromY, res.move.toX, res.move.toY], [0, 5, 5, 5]);
+});
+
+test('Lv 10 opening search reaches depth >= 4 within time budget', () => {
+  resetSearchState();
+  const cfg = levelConfig(10);
+  const t0 = Date.now();
+  const res = searchPosition(initialBoard(), RED, 10);
+  const elapsed = Date.now() - t0;
+  assert.ok(res && res.move);
+  assert.ok(res.depth >= 4, `expected depth >= 4, got ${res.depth}`);
+  assert.ok(elapsed <= cfg.timeMs + 500, `Lv 10 took ${elapsed}ms (budget ${cfg.timeMs}ms)`);
+});
+
+test('LEVELS defines pacing and search parameters for all 10 levels', () => {
+  assert.equal(LEVELS.length, 10);
+  for (const cfg of LEVELS) {
+    assert.ok(cfg.maxDepth >= 1, `lv ${cfg.lv} missing maxDepth`);
+    assert.ok(cfg.qDepth >= 2, `lv ${cfg.lv} missing qDepth`);
+    assert.ok(cfg.minMs >= 300, `lv ${cfg.lv} missing minMs`);
+    assert.ok(cfg.ttBits >= 15, `lv ${cfg.lv} missing ttBits`);
   }
 });
 

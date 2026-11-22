@@ -198,6 +198,91 @@ export function isInCheck(board, side) {
   return isSquareAttacked(board, kx, ky, opposite(side));
 }
 
+// -------- Fast attack detection (AI hot path) --------
+// Same question as isSquareAttacked(), but answered by probing *from* the king square
+// instead of generating every enemy move on the board. Costs ~15 array reads instead of
+// ~90 squares x move generation.
+//
+// Advisors and elephants are intentionally skipped: a legal king always sits inside its
+// own palace, and neither piece can ever cross the river, so they are geometrically
+// unable to reach the opposing king square.
+const KING_RAYS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const HORSE_ATTACKS = [
+  [1, 2], [2, 1], [2, -1], [1, -2],
+  [-1, -2], [-2, -1], [-2, 1], [-1, 2]
+];
+
+export function isKingAttackedAt(board, x, y, side) {
+  const by = opposite(side);
+
+  // Rook / cannon / flying general / adjacent king, along the four orthogonal rays.
+  for (let r = 0; r < 4; r++) {
+    const dx = KING_RAYS[r][0];
+    const dy = KING_RAYS[r][1];
+    let nx = x + dx;
+    let ny = y + dy;
+    let dist = 1;
+    let screened = false;
+    while (inBoard(nx, ny)) {
+      const p = board[idx(nx, ny)];
+      if (p) {
+        if (!screened) {
+          if (p.side === by) {
+            if (p.type === ROOK) return true;
+            // A king attacks one step orthogonally; the flying-general rule extends that
+            // to the whole file when nothing stands between the two kings.
+            if (p.type === KING && (dist === 1 || dx === 0)) return true;
+          }
+          screened = true;
+        } else {
+          if (p.side === by && p.type === CANNON) return true;
+          break;
+        }
+      }
+      nx += dx;
+      ny += dy;
+      dist++;
+    }
+  }
+
+  // Horses: probe the eight squares a horse could jump in from, honouring the leg block.
+  for (let h = 0; h < 8; h++) {
+    const dx = HORSE_ATTACKS[h][0];
+    const dy = HORSE_ATTACKS[h][1];
+    const hx = x + dx;
+    const hy = y + dy;
+    if (!inBoard(hx, hy)) continue;
+    const p = board[idx(hx, hy)];
+    if (!p || p.side !== by || p.type !== HORSE) continue;
+    const lx = hx + (dx % 2 === 0 ? -dx / 2 : 0);
+    const ly = hy + (dy % 2 === 0 ? -dy / 2 : 0);
+    if (!board[idx(lx, ly)]) return true;
+  }
+
+  // Pawns: forward push only, plus sideways once the attacker has crossed the river.
+  const pawnY = y - (by === RED ? 1 : -1);
+  if (inBoard(x, pawnY)) {
+    const p = board[idx(x, pawnY)];
+    if (p && p.side === by && p.type === PAWN) return true;
+  }
+  if (hasCrossedRiver(by, y)) {
+    for (const sx of [x - 1, x + 1]) {
+      if (!inBoard(sx, y)) continue;
+      const p = board[idx(sx, y)];
+      if (p && p.side === by && p.type === PAWN) return true;
+    }
+  }
+
+  return false;
+}
+
+// Convenience wrapper: locate the king, then run the fast probe.
+export function isKingAttacked(board, side) {
+  const k = findKing(board, side);
+  if (k < 0) return true;
+  return isKingAttackedAt(board, k % FILES, (k / FILES) | 0, side);
+}
+
 export function applyMove(board, mv) {
   const nb = board.slice();
   const from = idx(mv.fromX, mv.fromY);
@@ -205,6 +290,26 @@ export function applyMove(board, mv) {
   nb[to] = nb[from];
   nb[from] = null;
   return nb;
+}
+
+// -------- In-place move application (AI hot path) --------
+// Mutates `board` directly and returns an undo record. Every makeMove() must be paired
+// with an unmakeMove(); because the array identity and length never change, a search
+// node allocates zero 90-slot copies. applyMove() above stays immutable for the
+// server / UI / replay paths, so their semantics are untouched.
+export function makeMove(board, fromX, fromY, toX, toY) {
+  const from = idx(fromX, fromY);
+  const to = idx(toX, toY);
+  const moving = board[from];
+  const captured = board[to];
+  board[to] = moving;
+  board[from] = null;
+  return { from, to, moving, captured };
+}
+
+export function unmakeMove(board, undo) {
+  board[undo.from] = undo.moving;
+  board[undo.to] = undo.captured;
 }
 
 export function legalMoves(board, side) {

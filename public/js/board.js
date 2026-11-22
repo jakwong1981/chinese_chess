@@ -481,19 +481,139 @@ function addRoom(parent, floorY) {
   });
 }
 
-function pushSegment(geoms, x0, z0, x1, z1, width) {
-  const dx = x1 - x0;
-  const dz = z1 - z0;
-  const len = Math.hypot(dx, dz);
-  const g = new THREE.BoxGeometry(width, 0.02, len);
-  _e.set(0, Math.atan2(dx, dz), 0);
-  _q.setFromEuler(_e);
-  g.applyMatrix4(_m.compose(
-    new THREE.Vector3((x0 + x1) / 2, 0.012, (z0 + z1) / 2),
-    _q,
-    _s
-  ));
-  geoms.push(g);
+// High-resolution (2048×1024, exact 2:1 match to campW:campD = 9.4:4.7) wood + crisp
+// ink grid texture for each half-board. GPU trilinear mipmapping + 16x anisotropic
+// filtering keeps every line sharp and alias-free at oblique camera angles.
+function campBoardTexture(isRed) {
+  const W = 2048;
+  const H = 1024;
+  const campW = BOARD_W + PAD * 2; // 9.4
+  const campD = 4 * CELL + PAD;    // 4.7
+  const outerZ = HALF_Z + PAD;     // 5.2
+  const centerZ = isRed ? (0.5 + outerZ) / 2 : (-0.5 - outerZ) / 2;
+  const zMin = centerZ - campD / 2;
+
+  const toX = (gx) => (((gx - HALF_X) * CELL + campW / 2) / campW) * W;
+  const toY = (gy) => (((HALF_Z - gy) * CELL - zMin) / campD) * H;
+
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext('2d');
+
+  // Warm rosewood/hinoki base gradient
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, '#e8c791');
+  grad.addColorStop(0.5, '#d8ae72');
+  grad.addColorStop(1, '#c59457');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle wood grain lines (kept soft so ink grid reads clearly)
+  ctx.save();
+  ctx.globalAlpha = 0.13;
+  for (let i = 0; i < 120; i++) {
+    ctx.strokeStyle = i % 2 ? '#613819' : '#fff0d2';
+    ctx.lineWidth = 1.5 + (i % 3);
+    const y = (i / 120) * H;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.bezierCurveTo(W * 0.32, y + 12, W * 0.68, y - 10, W, y + 5);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  const lineW = 9;
+  const halfL = lineW / 2;
+  const clampY = (py) => Math.max(halfL, Math.min(H - halfL, py));
+
+  const yStart = isRed ? 0 : 5;
+  const yEnd = isRed ? 4 : 9;
+  const xLeft = toX(0);
+  const xRight = toX(8);
+  const yTop = clampY(toY(isRed ? 4 : 9));
+  const yBot = clampY(toY(isRed ? 0 : 5));
+
+  ctx.strokeStyle = '#1b0d04';
+  ctx.lineCap = 'square';
+  ctx.lineJoin = 'miter';
+
+  // Outer decorative double frame (classic Xiangqi board border)
+  const frameGap = 24;
+  ctx.lineWidth = 12;
+  ctx.beginPath();
+  if (isRed) {
+    // Open at top (river bank), closed on left, bottom, right
+    ctx.moveTo(xLeft - frameGap, 0);
+    ctx.lineTo(xLeft - frameGap, yBot + frameGap);
+    ctx.lineTo(xRight + frameGap, yBot + frameGap);
+    ctx.lineTo(xRight + frameGap, 0);
+  } else {
+    // Open at bottom (river bank), closed on left, top, right
+    ctx.moveTo(xLeft - frameGap, H);
+    ctx.lineTo(xLeft - frameGap, yTop - frameGap);
+    ctx.lineTo(xRight + frameGap, yTop - frameGap);
+    ctx.lineTo(xRight + frameGap, H);
+  }
+  ctx.stroke();
+
+  // Horizontal ranks
+  ctx.lineWidth = lineW;
+  ctx.beginPath();
+  for (let gy = yStart; gy <= yEnd; gy++) {
+    const py = clampY(toY(gy));
+    ctx.moveTo(xLeft, py);
+    ctx.lineTo(xRight, py);
+  }
+  // Vertical files
+  for (let gx = 0; gx < FILES; gx++) {
+    const px = toX(gx);
+    ctx.moveTo(px, yTop);
+    ctx.lineTo(px, yBot);
+  }
+  ctx.stroke();
+
+  // Palace diagonals
+  ctx.lineWidth = 7.5;
+  ctx.beginPath();
+  const pY0 = isRed ? 0 : 7;
+  const pY1 = isRed ? 2 : 9;
+  ctx.moveTo(toX(3), clampY(toY(pY0)));
+  ctx.lineTo(toX(5), clampY(toY(pY1)));
+  ctx.moveTo(toX(5), clampY(toY(pY0)));
+  ctx.lineTo(toX(3), clampY(toY(pY1)));
+  ctx.stroke();
+
+  // Traditional L-shaped corner markers for cannon & pawn positions
+  const starPts = isRed
+    ? [[1, 2], [7, 2], [0, 3], [2, 3], [4, 3], [6, 3], [8, 3]]
+    : [[1, 7], [7, 7], [0, 6], [2, 6], [4, 6], [6, 6], [8, 6]];
+  const gap = 14;
+  const arm = 24;
+  ctx.lineWidth = 6.5;
+  ctx.beginPath();
+  for (const [sx, sy] of starPts) {
+    const cx = toX(sx);
+    const cy = clampY(toY(sy));
+    for (const dx of [-1, 1]) {
+      if (sx === 0 && dx < 0) continue;
+      if (sx === 8 && dx > 0) continue;
+      for (const dy of [-1, 1]) {
+        ctx.moveTo(cx + dx * (gap + arm), cy + dy * gap);
+        ctx.lineTo(cx + dx * gap, cy + dy * gap);
+        ctx.lineTo(cx + dx * gap, cy + dy * (gap + arm));
+      }
+    }
+  }
+  ctx.stroke();
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 16;
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  return tex;
 }
 
 function makeWaterMaterial() {
@@ -608,20 +728,36 @@ export function createBoardGroup() {
   const redCenterZ = (0.5 + outerZ) / 2;
   const blackCenterZ = (-0.5 + -outerZ) / 2;
 
-  const campMat = new THREE.MeshStandardMaterial({
+  const campSideMat = new THREE.MeshStandardMaterial({
     map: woodTexture('#e4c089', '#c49255'),
     roughness: 0.78,
     metalness: 0.0,
     envMapIntensity: 0.35
   });
+  const redTopMat = new THREE.MeshStandardMaterial({
+    map: campBoardTexture(true),
+    roughness: 0.82,
+    metalness: 0.0,
+    envMapIntensity: 0.28
+  });
+  const blackTopMat = new THREE.MeshStandardMaterial({
+    map: campBoardTexture(false),
+    roughness: 0.82,
+    metalness: 0.0,
+    envMapIntensity: 0.28
+  });
   const campGeom = new THREE.BoxGeometry(campW, 0.18, campD);
-  const redCamp = new THREE.Mesh(campGeom, campMat);
+  const redCamp = new THREE.Mesh(campGeom, [
+    campSideMat, campSideMat, redTopMat, campSideMat, campSideMat, campSideMat
+  ]);
   redCamp.position.set(0, -0.09, redCenterZ);
   redCamp.receiveShadow = true;
   redCamp.castShadow = true;
   group.add(redCamp);
 
-  const blackCamp = new THREE.Mesh(campGeom, campMat);
+  const blackCamp = new THREE.Mesh(campGeom, [
+    campSideMat, campSideMat, blackTopMat, campSideMat, campSideMat, campSideMat
+  ]);
   blackCamp.position.set(0, -0.09, blackCenterZ);
   blackCamp.receiveShadow = true;
   blackCamp.castShadow = true;
@@ -685,54 +821,7 @@ export function createBoardGroup() {
     group.add(noRaycast(stele));
   }
 
-  const ink = new THREE.MeshStandardMaterial({ color: 0x241407, roughness: 0.7 });
-  const segs = [];
-  for (let y = 0; y <= 4; y++) {
-    const z = HALF_Z - y;
-    pushSegment(segs, -HALF_X, z, HALF_X, z, 0.035);
-  }
-  for (let y = 5; y <= 9; y++) {
-    const z = HALF_Z - y;
-    pushSegment(segs, -HALF_X, z, HALF_X, z, 0.035);
-  }
-  for (let x = 0; x < FILES; x++) {
-    const wx = (x - HALF_X) * CELL;
-    pushSegment(segs, wx, 0.5, wx, HALF_Z, 0.03);
-    pushSegment(segs, wx, -HALF_Z, wx, -0.5, 0.03);
-  }
-  const palace = [
-    [3, 0, 5, 2], [5, 0, 3, 2],
-    [3, 7, 5, 9], [5, 7, 3, 9]
-  ];
-  for (const [x0, y0, x1, y1] of palace) {
-    const a = gridToWorld(x0, y0);
-    const b = gridToWorld(x1, y1);
-    pushSegment(segs, a.x, a.z, b.x, b.z, 0.028);
-  }
-  const lines = new THREE.Mesh(mergeGeometries(segs, false), ink);
-  lines.receiveShadow = true;
-  group.add(lines);
-  for (const g of segs) g.dispose();
 
-  const starGeom = mergeGeometries([
-    new THREE.BoxGeometry(0.16, 0.02, 0.035),
-    new THREE.BoxGeometry(0.035, 0.02, 0.16)
-  ], false);
-  const stars = new THREE.InstancedMesh(starGeom, ink, 14);
-  const starPts = [
-    [1, 2], [7, 2], [1, 7], [7, 7],
-    [0, 3], [2, 3], [4, 3], [6, 3], [8, 3],
-    [0, 6], [2, 6], [4, 6], [6, 6], [8, 6]
-  ];
-  const dummy = new THREE.Object3D();
-  starPts.forEach(([sx, sy], i) => {
-    const p = gridToWorld(sx, sy, 0.02);
-    dummy.position.copy(p);
-    dummy.updateMatrix();
-    stars.setMatrixAt(i, dummy.matrix);
-  });
-  stars.instanceMatrix.needsUpdate = true;
-  group.add(stars);
 
   // Warm tiled floor and an open-sided living room around the tea table.
   const groundY = -18;
