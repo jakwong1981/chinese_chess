@@ -261,24 +261,191 @@ function stoneTexture() {
   return tex;
 }
 
-function steleTexture(label) {
+// Build a miniature 3D blooming lotus flower (2 material groups: petals + golden stamen)
+function makeLotusGeometry() {
+  const norm = (raw) => {
+    const g = raw.index ? raw.toNonIndexed() : raw.clone();
+    if (!g.attributes.normal) g.computeVertexNormals();
+    if (!g.attributes.uv) {
+      g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+    }
+    return g;
+  };
+  const petals = [];
+  for (let ring = 0; ring < 2; ring++) {
+    const count = 6;
+    const rad = ring === 0 ? 0.56 : 0.34;
+    const tilt = ring === 0 ? 0.95 : 0.55;
+    const pScale = ring === 0 ? [0.36, 0.14, 0.62] : [0.26, 0.14, 0.48];
+    const yOff = ring === 0 ? 0.12 : 0.22;
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + ring * (Math.PI / count);
+      const raw = new THREE.SphereGeometry(1, 7, 5);
+      const g = norm(raw);
+      raw.dispose();
+      _e.set(tilt, a, 0, 'YXZ');
+      _q.setFromEuler(_e);
+      _p.set(Math.sin(a) * rad, yOff, Math.cos(a) * rad);
+      _s.set(pScale[0], pScale[1], pScale[2]);
+      g.applyMatrix4(_m.compose(_p, _q, _s));
+      petals.push(g);
+    }
+  }
+  const petalMerged = mergeGeometries(petals, false);
+  for (const g of petals) g.dispose();
+
+  const stamenRaw = new THREE.SphereGeometry(0.28, 8, 6);
+  const stamen = norm(stamenRaw);
+  stamenRaw.dispose();
+  _q.identity();
+  _p.set(0, 0.20, 0);
+  _s.set(1, 0.65, 1);
+  stamen.applyMatrix4(_m.compose(_p, _q, _s));
+
+  const combined = mergeGeometries([petalMerged, stamen], true);
+  petalMerged.dispose();
+  stamen.dispose();
+  _s.set(1, 1, 1);
+  return combined;
+}
+
+// Sample bold Chinese calligraphy strokes onto a 2D grid so floating lotus blossoms
+// form crisp, legible 楚 / 河 / 漢 / 界 characters directly on the water surface.
+function sampleGlyphPoints(char, grid = 19) {
   const c = document.createElement('canvas');
-  c.width = 256;
-  c.height = 256;
+  c.width = c.height = grid;
   const ctx = c.getContext('2d');
-  ctx.fillStyle = '#3a403c';
-  ctx.fillRect(0, 0, 256, 256);
-  ctx.strokeStyle = '#d7c07a';
-  ctx.lineWidth = 8;
-  ctx.strokeRect(16, 16, 224, 224);
-  ctx.fillStyle = '#f0d78a';
-  ctx.font = 'bold 72px "Kaiti TC", "KaiTi", "Songti TC", "Noto Serif TC", serif';
+  ctx.clearRect(0, 0, grid, grid);
+  ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(label, 128, 128);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  ctx.font = `900 ${Math.round(grid * 0.88)}px "Kaiti TC", "KaiTi", "Songti TC", "PingFang TC", "Noto Serif TC", serif`;
+  ctx.fillText(char, grid / 2, grid / 2 + 0.5);
+
+  const data = ctx.getImageData(0, 0, grid, grid).data;
+  const pts = [];
+  for (let py = 0; py < grid; py++) {
+    for (let px = 0; px < grid; px++) {
+      const alpha = data[(py * grid + px) * 4 + 3];
+      if (alpha > 105) {
+        pts.push({
+          u: (px + 0.5) / grid - 0.5,
+          v: (py + 0.5) / grid - 0.5
+        });
+      }
+    }
+  }
+  return pts;
+}
+
+function addRiverLotusCalligraphy(parent) {
+  const lotusGeo = makeLotusGeometry();
+  const padGeo = new THREE.CylinderGeometry(1, 1, 0.014, 16, 1, false, 0.22, Math.PI * 1.88);
+
+  const petalMat = new THREE.MeshStandardMaterial({
+    color: 0xff2b38,
+    emissive: 0x8a0c16,
+    emissiveIntensity: 0.48,
+    roughness: 0.46,
+    metalness: 0.02,
+    envMapIntensity: 0.35
+  });
+  const stamenMat = new THREE.MeshStandardMaterial({
+    color: 0xffdf6b,
+    emissive: 0x6b4708,
+    emissiveIntensity: 0.5,
+    roughness: 0.45,
+    metalness: 0.08
+  });
+  const padMat = new THREE.MeshStandardMaterial({
+    color: 0x1d6b45,
+    roughness: 0.72,
+    metalness: 0.0,
+    envMapIntensity: 0.3
+  });
+
+  const waterY = -0.105;
+  const charW = 0.80;
+  const charH = 0.76;
+  const chars = [
+    ['楚', -2.55],
+    ['河', -1.45],
+    ['漢',  1.45],
+    ['界',  2.55]
+  ];
+  const floaters = [];
+  const dummy = new THREE.Object3D();
+
+  for (const [ch, centerX] of chars) {
+    const pts = sampleGlyphPoints(ch, 19);
+    if (!pts.length) continue;
+
+    const charGroup = new THREE.Group();
+    charGroup.position.set(centerX, waterY, 0);
+
+    const flowerMesh = new THREE.InstancedMesh(lotusGeo, [petalMat, stamenMat], pts.length);
+    flowerMesh.renderOrder = 2;
+
+    const padPts = pts.filter((_, idx) => idx % 2 === 0);
+    const padMesh = new THREE.InstancedMesh(padGeo, padMat, padPts.length);
+    padMesh.renderOrder = 2;
+
+    pts.forEach((pt, i) => {
+      const seed = (i * 2654435761) >>> 0;
+      const jitter = ((seed & 255) / 255 - 0.5) * 0.008;
+      const scale = 0.029 + (((seed >>> 8) & 255) / 255) * 0.006;
+      dummy.position.set(pt.u * charW + jitter, 0.006, pt.v * charH - jitter);
+      dummy.rotation.set(0, ((seed >>> 16) & 255) * 0.025, 0);
+      dummy.scale.setScalar(scale);
+      dummy.updateMatrix();
+      flowerMesh.setMatrixAt(i, dummy.matrix);
+    });
+    flowerMesh.instanceMatrix.needsUpdate = true;
+
+    padPts.forEach((pt, i) => {
+      const seed = (i * 1597334677) >>> 0;
+      const r = 0.044 + (((seed >>> 4) & 255) / 255) * 0.012;
+      dummy.position.set(pt.u * charW, -0.008, pt.v * charH);
+      dummy.rotation.set(0, ((seed >>> 12) & 255) * 0.025, 0);
+      dummy.scale.set(r, 1, r);
+      dummy.updateMatrix();
+      padMesh.setMatrixAt(i, dummy.matrix);
+    });
+    padMesh.instanceMatrix.needsUpdate = true;
+
+    charGroup.add(noRaycast(padMesh), noRaycast(flowerMesh));
+    parent.add(charGroup);
+    floaters.push({ obj: charGroup, baseY: waterY, phase: centerX * 1.15 });
+  }
+
+  // Accent full-bloom lotus flowers & lily pads drifting near the river center & banks
+  const accents = [
+    [-3.45, -0.18, 0.085, 0.14],
+    [-3.30,  0.22, 0.068, 0.11],
+    [-0.48,  0.16, 0.082, 0.13],
+    [ 0.48, -0.16, 0.082, 0.13],
+    [ 3.30, -0.22, 0.068, 0.11],
+    [ 3.45,  0.18, 0.085, 0.14]
+  ];
+  for (const [ax, az, fScale, pRad] of accents) {
+    const g = new THREE.Group();
+    g.position.set(ax, waterY, az);
+    const pad = new THREE.Mesh(padGeo, padMat);
+    pad.scale.set(pRad, 1, pRad);
+    pad.position.y = -0.008;
+    pad.rotation.y = ax * 2.1 + az * 3.7;
+    const bloom = new THREE.Mesh(lotusGeo, [petalMat, stamenMat]);
+    bloom.scale.setScalar(fScale);
+    bloom.position.y = 0.006;
+    bloom.rotation.y = ax * 1.4;
+    pad.renderOrder = 2;
+    bloom.renderOrder = 2;
+    g.add(noRaycast(pad), noRaycast(bloom));
+    parent.add(g);
+    floaters.push({ obj: g, baseY: waterY, phase: ax * 1.7 + az * 2.3 });
+  }
+
+  parent.userData.lotusFloaters = floaters;
 }
 
 function noRaycast(mesh) {
@@ -716,6 +883,14 @@ export function tickBoard(group, time) {
   if (mat) mat.uniforms.uTime.value = time;
   const beam = group?.userData?.sunbeamMat;
   if (beam) beam.uniforms.uTime.value = time;
+  const floaters = group?.userData?.lotusFloaters;
+  if (floaters) {
+    for (let i = 0; i < floaters.length; i++) {
+      const f = floaters[i];
+      f.obj.position.y = f.baseY + Math.sin(time * 1.65 + f.phase) * 0.010;
+      f.obj.rotation.z = Math.sin(time * 1.15 + f.phase) * 0.018;
+    }
+  }
 }
 
 export function createBoardGroup() {
@@ -807,19 +982,8 @@ export function createBoardGroup() {
   const bridgeGeoms = [-HALF_X, HALF_X].map((x) => makeBoxGeom(0.36, 0.08, 1, x, -0.02, 0));
   group.add(mergeIntoMesh(bridgeGeoms, bridgeMat, { castShadow: true, receiveShadow: true }));
 
-  const stoneSide = new THREE.MeshStandardMaterial({ color: 0x4c514c, roughness: 0.86, envMapIntensity: 0.5 });
-  const stoneTop = new THREE.MeshStandardMaterial({ color: 0x5c615c, roughness: 0.78, envMapIntensity: 0.55 });
-  for (const [label, x] of [['楚河', -2.5], ['漢界', 2.5]]) {
-    const face = new THREE.MeshStandardMaterial({
-      map: steleTexture(label), roughness: 0.55, envMapIntensity: 0.65
-    });
-    const stele = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.48, 0.12), [
-      stoneSide, stoneSide, stoneTop, stoneSide, face, stoneSide
-    ]);
-    stele.position.set(x, 0.06, 0);
-    stele.castShadow = true;
-    group.add(noRaycast(stele));
-  }
+  // Floating 3D lotus blossoms & lily pads arranged into 「楚河漢界」 on the river
+  addRiverLotusCalligraphy(group);
 
 
 

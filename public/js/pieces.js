@@ -4,7 +4,10 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { GLYPHS, RED, BLACK } from '../../shared/rules.js';
+import { GLYPHS, RED, BLACK, KING, ELEPHANT } from '../../shared/rules.js';
+import { createKingMesh } from './kingModel.js';
+import { createElephantMesh } from './elephantModel.js';
+import { createArmyPieceMesh } from './armyModels.js';
 
 export const PIECE_RADIUS = 0.4;
 export const PIECE_BASE_Y = 0;
@@ -225,6 +228,10 @@ function materialsFor(side, type) {
 }
 
 export function createPieceMesh(side, type) {
+  if (type === KING) return createKingMesh(side, PIECE_RADIUS);
+  if (type === ELEPHANT) return createElephantMesh(side, PIECE_RADIUS);
+  const sculpted = createArmyPieceMesh(side, type, PIECE_RADIUS);
+  if (sculpted) return sculpted;
   const mesh = new THREE.Mesh(getSharedPieceGeometry(), materialsFor(side, type));
   mesh.castShadow = true;
   mesh.receiveShadow = true;
