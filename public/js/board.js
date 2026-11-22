@@ -342,20 +342,21 @@ function addRiverLotusCalligraphy(parent) {
   const lotusGeo = makeLotusGeometry();
   const padGeo = new THREE.CylinderGeometry(1, 1, 0.014, 16, 1, false, 0.22, Math.PI * 1.88);
 
+  // White base material so per-instance rainbow colors (setColorAt) render vividly
   const petalMat = new THREE.MeshStandardMaterial({
-    color: 0xff2b38,
-    emissive: 0x8a0c16,
-    emissiveIntensity: 0.48,
-    roughness: 0.46,
-    metalness: 0.02,
-    envMapIntensity: 0.35
+    color: 0xffffff,
+    emissive: 0x222222,
+    emissiveIntensity: 0.3,
+    roughness: 0.42,
+    metalness: 0.08,
+    envMapIntensity: 0.45
   });
   const stamenMat = new THREE.MeshStandardMaterial({
-    color: 0xffdf6b,
-    emissive: 0x6b4708,
+    color: 0xfff2a6,
+    emissive: 0x8f660a,
     emissiveIntensity: 0.5,
-    roughness: 0.45,
-    metalness: 0.08
+    roughness: 0.38,
+    metalness: 0.15
   });
   const padMat = new THREE.MeshStandardMaterial({
     color: 0x1d6b45,
@@ -363,6 +364,9 @@ function addRiverLotusCalligraphy(parent) {
     metalness: 0.0,
     envMapIntensity: 0.3
   });
+
+  const rainbowHex = [0xff3b30, 0xff9500, 0xffdd00, 0x34d058, 0x22d3ee, 0x3b82f6, 0xc06cff];
+  const tmpColor = new THREE.Color();
 
   const waterY = -0.105;
   const charW = 0.80;
@@ -394,13 +398,23 @@ function addRiverLotusCalligraphy(parent) {
       const seed = (i * 2654435761) >>> 0;
       const jitter = ((seed & 255) / 255 - 0.5) * 0.008;
       const scale = 0.029 + (((seed >>> 8) & 255) / 255) * 0.006;
-      dummy.position.set(pt.u * charW + jitter, 0.006, pt.v * charH - jitter);
+      const localX = pt.u * charW + jitter;
+      const localZ = pt.v * charH - jitter;
+      dummy.position.set(localX, 0.006, localZ);
       dummy.rotation.set(0, ((seed >>> 16) & 255) * 0.025, 0);
       dummy.scale.setScalar(scale);
       dummy.updateMatrix();
       flowerMesh.setMatrixAt(i, dummy.matrix);
+
+      // Smooth 7-color rainbow gradient flowing across 「楚河漢界」
+      const worldX = centerX + localX;
+      const t = Math.max(0, Math.min(1, (worldX + 2.95) / 5.9));
+      const hue = t * 0.83; // Red -> Orange -> Yellow -> Green -> Cyan -> Blue -> Violet
+      tmpColor.setHSL(hue, 0.94, 0.60);
+      flowerMesh.setColorAt(i, tmpColor);
     });
     flowerMesh.instanceMatrix.needsUpdate = true;
+    if (flowerMesh.instanceColor) flowerMesh.instanceColor.needsUpdate = true;
 
     padPts.forEach((pt, i) => {
       const seed = (i * 1597334677) >>> 0;
@@ -418,7 +432,7 @@ function addRiverLotusCalligraphy(parent) {
     floaters.push({ obj: charGroup, baseY: waterY, phase: centerX * 1.15 });
   }
 
-  // Accent full-bloom lotus flowers & lily pads drifting near the river center & banks
+  // Accent full-bloom rainbow lotus flowers & lily pads drifting near the river center & banks
   const accents = [
     [-3.45, -0.18, 0.085, 0.14],
     [-3.30,  0.22, 0.068, 0.11],
@@ -427,14 +441,22 @@ function addRiverLotusCalligraphy(parent) {
     [ 3.30, -0.22, 0.068, 0.11],
     [ 3.45,  0.18, 0.085, 0.14]
   ];
-  for (const [ax, az, fScale, pRad] of accents) {
+  accents.forEach(([ax, az, fScale, pRad], idx) => {
     const g = new THREE.Group();
     g.position.set(ax, waterY, az);
     const pad = new THREE.Mesh(padGeo, padMat);
     pad.scale.set(pRad, 1, pRad);
     pad.position.y = -0.008;
     pad.rotation.y = ax * 2.1 + az * 3.7;
-    const bloom = new THREE.Mesh(lotusGeo, [petalMat, stamenMat]);
+    const accentPetalMat = new THREE.MeshStandardMaterial({
+      color: rainbowHex[idx % rainbowHex.length],
+      emissive: rainbowHex[idx % rainbowHex.length],
+      emissiveIntensity: 0.28,
+      roughness: 0.42,
+      metalness: 0.08,
+      envMapIntensity: 0.45
+    });
+    const bloom = new THREE.Mesh(lotusGeo, [accentPetalMat, stamenMat]);
     bloom.scale.setScalar(fScale);
     bloom.position.y = 0.006;
     bloom.rotation.y = ax * 1.4;
@@ -443,7 +465,7 @@ function addRiverLotusCalligraphy(parent) {
     g.add(noRaycast(pad), noRaycast(bloom));
     parent.add(g);
     floaters.push({ obj: g, baseY: waterY, phase: ax * 1.7 + az * 2.3 });
-  }
+  });
 
   parent.userData.lotusFloaters = floaters;
 }
