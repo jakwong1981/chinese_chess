@@ -1,6 +1,6 @@
-// 3D board scene. Two wooden camps, a real river between rank 4 and rank 5,
-// bridges on the edge files, stone steles for 楚河 / 漢界. The board rests on a
-// round tea table (see teatable.js) in a naturally lit living room.
+// 3D board scene. Two wooden camps, a living river with caustics & crossing ripples
+// between rank 4 and rank 5, bridges on the edge files, stone steles for 楚河 / 漢界,
+// merged static room geometry, and soft volumetric window sunbeams.
 //
 // Grid: x ∈ [0..8] left→right, y ∈ [0..9] bottom→top.
 // World: board on XZ, y-up. Board-X → world X; board-Y → world −Z
@@ -36,8 +36,16 @@ export function worldToGrid(v3) {
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
+const _p = new THREE.Vector3();
+const _s = new THREE.Vector3(1, 1, 1);
+
+const woodTexCache = new Map();
 
 export function woodTexture(light, dark) {
+  const key = `${light}|${dark}`;
+  const cached = woodTexCache.get(key);
+  if (cached) return cached;
+
   const c = document.createElement('canvas');
   c.width = 512;
   c.height = 512;
@@ -62,6 +70,7 @@ export function woodTexture(light, dark) {
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.anisotropy = 8;
+  woodTexCache.set(key, tex);
   return tex;
 }
 
@@ -277,27 +286,75 @@ function noRaycast(mesh) {
   return mesh;
 }
 
+function makeBoxGeom(w, h, d, x, y, z, ry = 0) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  _e.set(0, ry, 0);
+  _q.setFromEuler(_e);
+  _p.set(x, y, z);
+  g.applyMatrix4(_m.compose(_p, _q, _s));
+  return g;
+}
+
+function mergeIntoMesh(geoms, material, { castShadow = false, receiveShadow = true } = {}) {
+  const merged = mergeGeometries(geoms, false);
+  for (const g of geoms) g.dispose();
+  const mesh = new THREE.Mesh(merged, material);
+  mesh.castShadow = castShadow;
+  mesh.receiveShadow = receiveShadow;
+  return mesh;
+}
+
+function makeSunbeamMaterial() {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      uTime: { value: 0 },
+      uColor: { value: new THREE.Color('#fff1cc') }
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform vec3 uColor;
+      varying vec2 vUv;
+      void main() {
+        // Soft vertical fade from window top (vUv.y = 1) down into room (vUv.y = 0)
+        float vFade = smoothstep(0.0, 0.55, vUv.y) * smoothstep(1.0, 0.85, vUv.y);
+        float hFade = smoothstep(0.0, 0.35, vUv.x) * smoothstep(1.0, 0.65, vUv.x);
+        float dust = 0.88 + 0.12 * sin(vUv.x * 12.0 + uTime * 0.45) * cos(vUv.y * 8.0 - uTime * 0.3);
+        float alpha = vFade * hFade * dust * 0.085;
+        gl_FragColor = vec4(uColor, alpha);
+      }
+    `
+  });
+}
+
 function addRoom(parent, floorY) {
   const room = new THREE.Group();
   room.name = 'living-room';
-  const wallMat = new THREE.MeshStandardMaterial({ map: wallpaperTexture(), roughness: 0.94 });
+  const wallMat = new THREE.MeshStandardMaterial({ map: wallpaperTexture(), roughness: 0.94, envMapIntensity: 0.35 });
   const trimMat = new THREE.MeshStandardMaterial({
-    map: woodTexture('#a77b4f', '#68462c'), roughness: 0.78
+    map: woodTexture('#a77b4f', '#68462c'), roughness: 0.78, envMapIntensity: 0.45
   });
   const cabinetMat = new THREE.MeshStandardMaterial({
-    map: woodTexture('#8f6441', '#4e3221'), roughness: 0.8
+    map: woodTexture('#8f6441', '#4e3221'), roughness: 0.8, envMapIntensity: 0.45
   });
-  const fabricMat = new THREE.MeshStandardMaterial({ color: 0x82918a, roughness: 0.98 });
-  const cushionMat = new THREE.MeshStandardMaterial({ color: 0xa7b2a5, roughness: 0.96 });
+  const fabricMat = new THREE.MeshStandardMaterial({ color: 0x82918a, roughness: 0.98, envMapIntensity: 0.3 });
+  const cushionMat = new THREE.MeshStandardMaterial({ color: 0xa7b2a5, roughness: 0.96, envMapIntensity: 0.3 });
 
-  const box = (w, h, d, x, y, z, material, casts = true) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
-    mesh.position.set(x, y, z);
-    mesh.castShadow = casts;
-    mesh.receiveShadow = true;
-    room.add(mesh);
-    return mesh;
-  };
+  const wallGeoms = [];
+  const trimGeoms = [];
+  const cabinetGeoms = [];
+  const fabricGeoms = [];
+  const cushionGeoms = [];
 
   const half = 32;
   const wallTop = floorY + 60;
@@ -310,24 +367,30 @@ function addRoom(parent, floorY) {
   const windowW = windowR - windowL;
   const windowX = (windowL + windowR) / 2;
 
-  box(windowL + half, wallH, 0.5, (windowL - half) / 2, wallY, -half, wallMat);
-  box(half - windowR, wallH, 0.5, (windowR + half) / 2, wallY, -half, wallMat);
-  box(windowW, windowBottom - floorY, 0.5, windowX, (windowBottom + floorY) / 2, -half, wallMat);
-  box(windowW, wallTop - windowTop, 0.5, windowX, (wallTop + windowTop) / 2, -half, wallMat);
-  box(0.5, wallH, half * 2, -half, wallY, 0, wallMat);
-  box(0.5, wallH, half * 2, half, wallY, 0, wallMat);
+  // Walls
+  wallGeoms.push(
+    makeBoxGeom(windowL + half, wallH, 0.5, (windowL - half) / 2, wallY, -half),
+    makeBoxGeom(half - windowR, wallH, 0.5, (windowR + half) / 2, wallY, -half),
+    makeBoxGeom(windowW, windowBottom - floorY, 0.5, windowX, (windowBottom + floorY) / 2, -half),
+    makeBoxGeom(windowW, wallTop - windowTop, 0.5, windowX, (wallTop + windowTop) / 2, -half),
+    makeBoxGeom(0.5, wallH, half * 2, -half, wallY, 0),
+    makeBoxGeom(0.5, wallH, half * 2, half, wallY, 0)
+  );
 
-  box(half * 2, 0.7, 0.35, 0, floorY + 0.35, -half + 0.35, trimMat);
-  box(0.35, 0.7, half * 2, -half + 0.35, floorY + 0.35, 0, trimMat);
-  box(0.35, 0.7, half * 2, half - 0.35, floorY + 0.35, 0, trimMat);
-
+  // Baseboards & window frame
   const frameZ = -half + 0.4;
-  box(0.7, windowTop - windowBottom + 1.4, 0.7, windowL, (windowTop + windowBottom) / 2, frameZ, trimMat);
-  box(0.7, windowTop - windowBottom + 1.4, 0.7, windowR, (windowTop + windowBottom) / 2, frameZ, trimMat);
-  box(windowW + 1.4, 0.7, 0.7, windowX, windowBottom, frameZ, trimMat);
-  box(windowW + 1.4, 0.7, 0.7, windowX, windowTop, frameZ, trimMat);
-  box(0.45, windowTop - windowBottom, 0.55, windowX, (windowTop + windowBottom) / 2, frameZ, trimMat);
-  box(windowW, 0.45, 0.55, windowX, (windowTop + windowBottom) / 2, frameZ, trimMat);
+  trimGeoms.push(
+    makeBoxGeom(half * 2, 0.7, 0.35, 0, floorY + 0.35, -half + 0.35),
+    makeBoxGeom(0.35, 0.7, half * 2, -half + 0.35, floorY + 0.35, 0),
+    makeBoxGeom(0.35, 0.7, half * 2, half - 0.35, floorY + 0.35, 0),
+    makeBoxGeom(0.7, windowTop - windowBottom + 1.4, 0.7, windowL, (windowTop + windowBottom) / 2, frameZ),
+    makeBoxGeom(0.7, windowTop - windowBottom + 1.4, 0.7, windowR, (windowTop + windowBottom) / 2, frameZ),
+    makeBoxGeom(windowW + 1.4, 0.7, 0.7, windowX, windowBottom, frameZ),
+    makeBoxGeom(windowW + 1.4, 0.7, 0.7, windowX, windowTop, frameZ),
+    makeBoxGeom(0.45, windowTop - windowBottom, 0.55, windowX, (windowTop + windowBottom) / 2, frameZ),
+    makeBoxGeom(windowW, 0.45, 0.55, windowX, (windowTop + windowBottom) / 2, frameZ)
+  );
+
   const glass = new THREE.Mesh(
     new THREE.PlaneGeometry(windowW, windowTop - windowBottom),
     new THREE.MeshStandardMaterial({
@@ -337,29 +400,52 @@ function addRoom(parent, floorY) {
   glass.position.set(windowX, (windowTop + windowBottom) / 2, -half + 0.25);
   room.add(glass);
 
+  // Volumetric window sunbeams (Phase 4 atmosphere)
+  const sunbeamMat = makeSunbeamMaterial();
+  for (const offsetX of [-4.2, 4.2]) {
+    const shaft = new THREE.Mesh(new THREE.PlaneGeometry(9.5, 36), sunbeamMat);
+    shaft.position.set(windowX + offsetX - 3.5, 8.5, -half + 13.5);
+    shaft.rotation.set(0.62, -0.22, 0.18);
+    shaft.renderOrder = 3;
+    room.add(shaft);
+  }
+  parent.userData.sunbeamMat = sunbeamMat;
+
   const addCouplet = (text, x, y, width, height) => {
     const banner = new THREE.Mesh(
       new THREE.PlaneGeometry(width, height),
-      new THREE.MeshStandardMaterial({ map: coupletTexture(text), roughness: 0.82 })
+      new THREE.MeshStandardMaterial({ map: coupletTexture(text), roughness: 0.82, envMapIntensity: 0.35 })
     );
     banner.position.set(x, y, -half + 0.32);
     banner.receiveShadow = true;
     room.add(banner);
-    box(width + 0.45, 0.2, 0.2, x, y + height / 2, -half + 0.4, trimMat);
-    box(width + 0.45, 0.2, 0.2, x, y - height / 2, -half + 0.4, trimMat);
+    trimGeoms.push(
+      makeBoxGeom(width + 0.45, 0.2, 0.2, x, y + height / 2, -half + 0.4),
+      makeBoxGeom(width + 0.45, 0.2, 0.2, x, y - height / 2, -half + 0.4)
+    );
   };
   addCouplet('春滿乾坤福滿門', 2.3, 15, 2.5, 23);
   addCouplet('天增歲月人增壽', 25.7, 15, 2.5, 23);
   addCouplet('詩酒茶花', -29.3, 0, 2.5, 18);
   addCouplet('琴棋書畫', -4.7, 0, 2.5, 18);
 
-  box(24, 8, 5, -17, floorY + 7.5, -29.2, cabinetMat);
-  box(24.8, 0.7, 5.5, -17, floorY + 11.85, -29.2, trimMat);
+  // TV cabinet
+  cabinetGeoms.push(
+    makeBoxGeom(24, 8, 5, -17, floorY + 7.5, -29.2),
+    makeBoxGeom(2.2, 1.8, 1.4, -17, floorY + 12.4, -29.8)
+  );
+  trimGeoms.push(makeBoxGeom(24.8, 0.7, 5.5, -17, floorY + 11.85, -29.2));
   for (const x of [-23, -17, -11]) {
-    box(5.4, 5.8, 0.25, x, floorY + 7.3, -26.58, trimMat);
+    trimGeoms.push(makeBoxGeom(5.4, 5.8, 0.25, x, floorY + 7.3, -26.58));
   }
-  box(20, 12, 0.65, -17, floorY + 18, -30.2, matForScreen());
-  box(2.2, 1.8, 1.4, -17, floorY + 12.4, -29.8, cabinetMat);
+
+  const tvFrame = new THREE.Mesh(
+    new THREE.BoxGeometry(20, 12, 0.65),
+    new THREE.MeshStandardMaterial({ color: 0x171b1c, roughness: 0.35, metalness: 0.12 })
+  );
+  tvFrame.position.set(-17, floorY + 18, -30.2);
+  room.add(tvFrame);
+
   const screen = new THREE.Mesh(
     new THREE.PlaneGeometry(18.8, 10.8),
     new THREE.MeshBasicMaterial({ map: newsTexture(), toneMapped: false })
@@ -367,24 +453,27 @@ function addRoom(parent, floorY) {
   screen.position.set(-17, floorY + 18, -29.85);
   room.add(screen);
 
-  const sofa = new THREE.Group();
-  const sofaBox = (w, h, d, x, y, z, material) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
-    mesh.position.set(x, y, z);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    sofa.add(mesh);
+  // Sofa (rotated +90 deg around Y at (-28.5, floorY, 5))
+  const sofaX = -28.5;
+  const sofaZ = 5;
+  const pushSofaBox = (arr, w, h, d, lx, ly, lz) => {
+    // Rotate local (lx, ly, lz) by +PI/2 around Y -> (lz, ly, -lx)
+    arr.push(makeBoxGeom(d, h, w, sofaX + lz, floorY + ly, sofaZ - lx));
   };
-  sofaBox(24, 7, 8, 0, 3.5, 0, fabricMat);
-  sofaBox(24, 13, 2.2, 0, 10, -3.4, fabricMat);
-  sofaBox(2.2, 9, 8, -11, 6.5, 0, fabricMat);
-  sofaBox(2.2, 9, 8, 11, 6.5, 0, fabricMat);
+  pushSofaBox(fabricGeoms, 24, 7, 8, 0, 3.5, 0);
+  pushSofaBox(fabricGeoms, 24, 13, 2.2, 0, 10, -3.4);
+  pushSofaBox(fabricGeoms, 2.2, 9, 8, -11, 6.5, 0);
+  pushSofaBox(fabricGeoms, 2.2, 9, 8, 11, 6.5, 0);
   for (const x of [-6.5, 0, 6.5]) {
-    sofaBox(6.1, 2, 5.5, x, 8, 0.5, cushionMat);
+    pushSofaBox(cushionGeoms, 6.1, 2, 5.5, x, 8, 0.5);
   }
-  sofa.position.set(-28.5, floorY, 5);
-  sofa.rotation.y = Math.PI / 2;
-  room.add(sofa);
+
+  // Add merged room meshes (5 draw calls instead of 30+, no distant castShadow)
+  room.add(mergeIntoMesh(wallGeoms, wallMat, { castShadow: false, receiveShadow: true }));
+  room.add(mergeIntoMesh(trimGeoms, trimMat, { castShadow: false, receiveShadow: true }));
+  room.add(mergeIntoMesh(cabinetGeoms, cabinetMat, { castShadow: false, receiveShadow: true }));
+  room.add(mergeIntoMesh(fabricGeoms, fabricMat, { castShadow: false, receiveShadow: true }));
+  room.add(mergeIntoMesh(cushionGeoms, cushionMat, { castShadow: false, receiveShadow: true }));
 
   parent.add(room);
   room.traverse((child) => {
@@ -392,23 +481,17 @@ function addRoom(parent, floorY) {
   });
 }
 
-function matForScreen() {
-  return new THREE.MeshStandardMaterial({ color: 0x171b1c, roughness: 0.35, metalness: 0.12 });
-}
-
-
 function pushSegment(geoms, x0, z0, x1, z1, width) {
   const dx = x1 - x0;
   const dz = z1 - z0;
   const len = Math.hypot(dx, dz);
   const g = new THREE.BoxGeometry(width, 0.02, len);
-  // Long axis is local +Z. yaw = atan2(dx, dz) lays that axis along the segment.
   _e.set(0, Math.atan2(dx, dz), 0);
   _q.setFromEuler(_e);
   g.applyMatrix4(_m.compose(
     new THREE.Vector3((x0 + x1) / 2, 0.012, (z0 + z1) / 2),
     _q,
-    new THREE.Vector3(1, 1, 1)
+    _s
   ));
   geoms.push(g);
 }
@@ -420,20 +503,37 @@ function makeWaterMaterial() {
     depthWrite: false,
     uniforms: {
       uTime: { value: 0 },
-      uDeep: { value: new THREE.Color('#0c3c46') },
-      uMid: { value: new THREE.Color('#1f7c88') },
-      uFoam: { value: new THREE.Color('#e7f6f4') }
+      uDeep: { value: new THREE.Color('#093640') },
+      uMid: { value: new THREE.Color('#1d7d8a') },
+      uFoam: { value: new THREE.Color('#e8f8f6') },
+      uRippleOrigin: { value: new THREE.Vector2(0, 0) },
+      uRippleStart: { value: -10.0 }
     },
     vertexShader: `
       uniform float uTime;
+      uniform vec2 uRippleOrigin;
+      uniform float uRippleStart;
       varying vec2 vUv;
       varying vec3 vWorld;
+      varying float vRipple;
       void main() {
         vUv = uv;
         vec3 p = position;
-        p.y += sin(p.x * 3.2 + uTime * 1.5) * 0.018;
-        p.y += sin(p.x * 7.0 - uTime * 2.1 + p.z * 4.0) * 0.008;
+        float w1 = sin(p.x * 3.0 + uTime * 1.6) * 0.014;
+        float w2 = sin(p.x * 6.8 - uTime * 2.2 + p.z * 4.5) * 0.007;
+        p.y += w1 + w2;
+
         vec4 world = modelMatrix * vec4(p, 1.0);
+        float age = uTime - uRippleStart;
+        float rip = 0.0;
+        if (age > 0.0 && age < 2.2) {
+          float dist = length(world.xz - uRippleOrigin);
+          float front = age * 2.4;
+          float env = exp(-abs(dist - front) * 3.8) * (1.0 - age / 2.2);
+          rip = sin((dist - front) * 18.0) * env;
+          world.y += rip * 0.022;
+        }
+        vRipple = rip;
         vWorld = world.xyz;
         gl_Position = projectionMatrix * viewMatrix * world;
       }
@@ -445,24 +545,57 @@ function makeWaterMaterial() {
       uniform vec3 uFoam;
       varying vec2 vUv;
       varying vec3 vWorld;
+      varying float vRipple;
+
+      float caustic(vec2 p, float t) {
+        float c1 = sin(p.x * 4.2 + t * 1.4 + sin(p.y * 5.0 - t));
+        float c2 = cos(p.y * 5.6 - t * 1.7 + cos(p.x * 3.8 + t * 0.9));
+        return pow(clamp(0.5 + 0.25 * (c1 + c2), 0.0, 1.0), 3.0);
+      }
+
       void main() {
-        float wave = sin(vWorld.x * 4.0 + uTime * 1.6) * 0.5 + 0.5;
-        float rip = sin(vWorld.x * 9.0 - uTime * 2.3 + vWorld.z * 2.0);
+        float wave = sin(vWorld.x * 3.8 + uTime * 1.5) * 0.5 + 0.5;
+        float rip = sin(vWorld.x * 9.5 - uTime * 2.4 + vWorld.z * 2.5);
         vec3 col = mix(uDeep, uMid, wave);
-        float bank = smoothstep(0.02, 0.18, min(vUv.y, 1.0 - vUv.y));
-        float foam = (1.0 - bank) * (0.4 + 0.6 * rip);
-        col = mix(col, uFoam, clamp(foam, 0.0, 0.7));
-        float fres = pow(1.0 - clamp(abs(normalize(cameraPosition - vWorld).y), 0.0, 1.0), 2.0);
-        col += vec3(0.45, 0.7, 0.72) * fres * 0.35;
-        gl_FragColor = vec4(pow(col, vec3(1.0 / 2.2)), 0.94);
+
+        // Animated underwater caustics
+        float caust = caustic(vWorld.xz * 1.15, uTime);
+        col += vec3(0.28, 0.68, 0.72) * caust * 0.32;
+
+        // Bank foam
+        float bank = smoothstep(0.02, 0.2, min(vUv.y, 1.0 - vUv.y));
+        float foam = (1.0 - bank) * (0.42 + 0.58 * rip);
+        col = mix(col, uFoam, clamp(foam, 0.0, 0.72));
+
+        // Interactive piece-crossing ripple shimmer
+        col += uFoam * abs(vRipple) * 0.55;
+
+        // Fresnel reflection + sun glint
+        vec3 viewDir = normalize(cameraPosition - vWorld);
+        float fres = pow(1.0 - clamp(abs(viewDir.y), 0.0, 1.0), 2.2);
+        col += vec3(0.5, 0.78, 0.82) * fres * 0.38;
+
+        float glint = pow(clamp(sin(vWorld.x * 5.2 + uTime * 2.1) * cos(vWorld.z * 8.0 - uTime * 1.4), 0.0, 1.0), 8.0);
+        col += vec3(1.15, 1.08, 0.92) * glint * 0.45;
+
+        gl_FragColor = vec4(pow(max(col, 0.0), vec3(1.0 / 2.2)), 0.94);
       }
     `
   });
 }
 
+export function triggerRiverRipple(group, worldX, worldZ = 0) {
+  const mat = group?.userData?.waterMat;
+  if (!mat) return;
+  mat.uniforms.uRippleOrigin.value.set(worldX, worldZ);
+  mat.uniforms.uRippleStart.value = mat.uniforms.uTime.value;
+}
+
 export function tickBoard(group, time) {
   const mat = group?.userData?.waterMat;
   if (mat) mat.uniforms.uTime.value = time;
+  const beam = group?.userData?.sunbeamMat;
+  if (beam) beam.uniforms.uTime.value = time;
 }
 
 export function createBoardGroup() {
@@ -478,7 +611,8 @@ export function createBoardGroup() {
   const campMat = new THREE.MeshStandardMaterial({
     map: woodTexture('#e4c089', '#c49255'),
     roughness: 0.78,
-    metalness: 0.02
+    metalness: 0.0,
+    envMapIntensity: 0.35
   });
   const campGeom = new THREE.BoxGeometry(campW, 0.18, campD);
   const redCamp = new THREE.Mesh(campGeom, campMat);
@@ -495,64 +629,53 @@ export function createBoardGroup() {
 
   const plinthMat = new THREE.MeshStandardMaterial({
     map: woodTexture('#8a5a32', '#4e3018'),
-    roughness: 0.86
+    roughness: 0.82,
+    envMapIntensity: 0.55
   });
   const plinth = new THREE.Mesh(new THREE.BoxGeometry(campW, 0.2, outerZ * 2), plinthMat);
   plinth.position.y = -0.28;
   plinth.receiveShadow = true;
   group.add(plinth);
 
-  const rimMat = new THREE.MeshStandardMaterial({ color: 0x4a2c18, roughness: 0.9 });
+  const rimMat = new THREE.MeshStandardMaterial({ color: 0x4a2c18, roughness: 0.82, envMapIntensity: 0.6 });
   const rimT = 0.28;
   const rimH = 0.16;
   const spanX = campW + rimT;
   const spanZ = outerZ * 2 + rimT;
   const rimY = -0.02;
-  for (const [w, d, x, z] of [
+  const rimGeoms = [
     [spanX + rimT, rimT, 0, spanZ / 2],
     [spanX + rimT, rimT, 0, -spanZ / 2],
     [rimT, spanZ, spanX / 2, 0],
     [rimT, spanZ, -spanX / 2, 0]
-  ]) {
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(w, rimH, d), rimMat);
-    bar.position.set(x, rimY, z);
-    bar.receiveShadow = true;
-    group.add(bar);
-  }
+  ].map(([w, d, x, z]) => makeBoxGeom(w, rimH, d, x, rimY, z));
+  group.add(mergeIntoMesh(rimGeoms, rimMat, { castShadow: true, receiveShadow: true }));
 
   const waterMat = makeWaterMaterial();
-  const water = new THREE.Mesh(new THREE.PlaneGeometry(campW + 0.2, 0.96), waterMat);
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(campW + 0.2, 0.96, 36, 6), waterMat);
   water.rotation.x = -Math.PI / 2;
   water.position.y = -0.12;
   water.renderOrder = 1;
   group.add(noRaycast(water));
   group.userData.waterMat = waterMat;
 
-  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x6a675f, roughness: 0.92 });
-  for (const z of [0.46, -0.46]) {
-    const lip = new THREE.Mesh(new THREE.BoxGeometry(campW, 0.16, 0.1), stoneMat);
-    lip.position.set(0, -0.1, z);
-    lip.receiveShadow = true;
-    group.add(lip);
-  }
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x6a675f, roughness: 0.9, envMapIntensity: 0.45 });
+  const lipGeoms = [0.46, -0.46].map((z) => makeBoxGeom(campW, 0.16, 0.1, 0, -0.1, z));
+  group.add(mergeIntoMesh(lipGeoms, stoneMat, { castShadow: false, receiveShadow: true }));
 
   const bridgeMat = new THREE.MeshStandardMaterial({
     map: woodTexture('#c9a06a', '#7a5330'),
-    roughness: 0.7
+    roughness: 0.66,
+    envMapIntensity: 0.6
   });
-  for (const x of [-HALF_X, HALF_X]) {
-    const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.08, 1), bridgeMat);
-    bridge.position.set(x, -0.02, 0);
-    bridge.castShadow = true;
-    bridge.receiveShadow = true;
-    group.add(bridge);
-  }
+  const bridgeGeoms = [-HALF_X, HALF_X].map((x) => makeBoxGeom(0.36, 0.08, 1, x, -0.02, 0));
+  group.add(mergeIntoMesh(bridgeGeoms, bridgeMat, { castShadow: true, receiveShadow: true }));
 
-  const stoneSide = new THREE.MeshStandardMaterial({ color: 0x4c514c, roughness: 0.88 });
-  const stoneTop = new THREE.MeshStandardMaterial({ color: 0x5c615c, roughness: 0.8 });
+  const stoneSide = new THREE.MeshStandardMaterial({ color: 0x4c514c, roughness: 0.86, envMapIntensity: 0.5 });
+  const stoneTop = new THREE.MeshStandardMaterial({ color: 0x5c615c, roughness: 0.78, envMapIntensity: 0.55 });
   for (const [label, x] of [['楚河', -2.5], ['漢界', 2.5]]) {
     const face = new THREE.MeshStandardMaterial({
-      map: steleTexture(label), roughness: 0.6
+      map: steleTexture(label), roughness: 0.55, envMapIntensity: 0.65
     });
     const stele = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.48, 0.12), [
       stoneSide, stoneSide, stoneTop, stoneSide, face, stoneSide
@@ -577,7 +700,6 @@ export function createBoardGroup() {
     pushSegment(segs, wx, 0.5, wx, HALF_Z, 0.03);
     pushSegment(segs, wx, -HALF_Z, wx, -0.5, 0.03);
   }
-  // Palace diagonals. Red palace ranks 0–2, black 7–9, files 3–5.
   const palace = [
     [3, 0, 5, 2], [5, 0, 3, 2],
     [3, 7, 5, 9], [5, 7, 3, 9]
@@ -616,7 +738,7 @@ export function createBoardGroup() {
   const groundY = -18;
   const pavement = new THREE.Mesh(
     new THREE.PlaneGeometry(80, 80),
-    new THREE.MeshStandardMaterial({ map: stoneTexture(), roughness: 0.9, metalness: 0 })
+    new THREE.MeshStandardMaterial({ map: stoneTexture(), roughness: 0.9, metalness: 0, envMapIntensity: 0.35 })
   );
   pavement.rotation.x = -Math.PI / 2;
   pavement.position.y = groundY;

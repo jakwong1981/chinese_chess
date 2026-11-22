@@ -29,10 +29,16 @@ export class Game {
     this.status = { over: false, inCheck: false };
     this._checkHold = false;
     this.pieceMeshes = new Map();     // board-index -> mesh
-    this.markers = [];                // legal-move dots currently shown
+    this.markers = [];                // currently visible pooled markers
+    this._quietDotPool = [];          // reusable quiet-move dots
+    this._captureDotPool = [];        // reusable capture rings
     this.lastMoveRing = null;
     this.selectionRing = null;
+    this.hoverRing = null;
     this.hintRing = null;
+    this.hintDestRing = null;
+    this._hintTimer = null;
+    this._hoveredMesh = null;
     this.aiWorker = null;
     this.stomp = null;
     this.roomCode = null;
@@ -94,10 +100,13 @@ export class Game {
     const layer = this.scene.pieceLayer;
     while (layer.children.length) layer.remove(layer.children[0]);
     this.pieceMeshes.clear();
+    this._hoveredMesh = null;
     this._clearMarkers();
-    if (this.lastMoveRing) { this.scene.markerLayer.remove(this.lastMoveRing); this.lastMoveRing = null; }
-    if (this.selectionRing) { this.scene.markerLayer.remove(this.selectionRing); this.selectionRing = null; }
-    if (this.hintRing) { this.scene.markerLayer.remove(this.hintRing); this.hintRing = null; }
+    if (this.lastMoveRing) this.lastMoveRing.visible = false;
+    if (this.selectionRing) this.selectionRing.visible = false;
+    if (this.hoverRing) this.hoverRing.visible = false;
+    if (this.hintRing) this.hintRing.visible = false;
+    if (this.hintDestRing) this.hintDestRing.visible = false;
 
     for (let i = 0; i < this.board.length; i++) {
       const p = this.board[i];
@@ -112,6 +121,11 @@ export class Game {
       this.pieceMeshes.set(i, mesh);
     }
     this._syncPieceIndices();
+    this.scene.requestShadowUpdate();
+  }
+
+  getPieceAt(x, y) {
+    return this.pieceMeshes.get(idx(x, y)) || null;
   }
 
   _syncPieceIndices() {
@@ -151,12 +165,31 @@ export class Game {
     const pos = gridToWorld(x, y, 0.01);
     this.selectionRing.position.copy(pos);
     this.selectionRing.visible = true;
-    // Show legal destinations.
+    // Show legal destinations using pooled markers (zero GPU allocation/leaks).
     const moves = legalMoves(this.board, p.side).filter(m => m.fromX === x && m.fromY === y);
+    let qIdx = 0;
+    let cIdx = 0;
     for (const m of moves) {
-      const dot = createMoveDot(0.14, m.capture);
+      let dot;
+      if (m.capture) {
+        dot = this._captureDotPool[cIdx];
+        if (!dot) {
+          dot = createMoveDot(0.14, true);
+          this.scene.markerLayer.add(dot);
+          this._captureDotPool[cIdx] = dot;
+        }
+        cIdx++;
+      } else {
+        dot = this._quietDotPool[qIdx];
+        if (!dot) {
+          dot = createMoveDot(0.14, false);
+          this.scene.markerLayer.add(dot);
+          this._quietDotPool[qIdx] = dot;
+        }
+        qIdx++;
+      }
       dot.position.copy(gridToWorld(m.toX, m.toY, 0.015));
-      this.scene.markerLayer.add(dot);
+      dot.visible = true;
       this.markers.push(dot);
     }
   }
@@ -166,9 +199,31 @@ export class Game {
     if (this.selectionRing) this.selectionRing.visible = false;
   }
 
+  onHover(mesh) {
+    if (!mesh || !this.isInteractionEnabled()) {
+      this._hoveredMesh = null;
+      if (this.hoverRing) this.hoverRing.visible = false;
+      return;
+    }
+    const piece = mesh.userData.piece;
+    const pos = mesh.userData.gridPos;
+    if (!piece || !pos || !this.isOwnPiece(piece.side) || this.turn !== piece.side) {
+      this._hoveredMesh = null;
+      if (this.hoverRing) this.hoverRing.visible = false;
+      return;
+    }
+    this._hoveredMesh = mesh;
+    if (!this.hoverRing) {
+      this.hoverRing = createHighlightRing(0xffe099, PIECE_RADIUS * 1.08);
+      this.scene.markerLayer.add(this.hoverRing);
+    }
+    this.hoverRing.position.copy(gridToWorld(pos.x, pos.y, 0.009));
+    this.hoverRing.visible = true;
+  }
+
   _clearMarkers() {
-    for (const m of this.markers) this.scene.markerLayer.remove(m);
-    this.markers = [];
+    for (const m of this.markers) m.visible = false;
+    this.markers.length = 0;
   }
 
   // Called by Input when the human attempts a move. Returns true if accepted locally.
@@ -262,22 +317,44 @@ export class Game {
         mover
       });
     }
-    const apexY = Math.max(start.y, target.y) + 0.55;
+    const isRook = attackerType === 'R';
+    const isHorse = attackerType === 'H';
+    const apexY = Math.max(start.y, target.y) + (isRook ? 0.22 : isHorse ? 0.82 : 0.55);
     const delay = cannonShot ? CANNON_FLIGHT_MS : 0;
     const t0 = performance.now() + delay;
+    const crossesRiver = (mv.fromY <= 4 && mv.toY >= 5) || (mv.fromY >= 5 && mv.toY <= 4);
+    let rippleFired = false;
+    const dx = target.x - start.x;
+    const dz = target.z - start.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    const tiltMul = isHorse ? 0.22 : 0.14;
+    const tiltX = (dz / dist) * tiltMul;
+    const tiltZ = -(dx / dist) * tiltMul;
     const anim = (now) => {
       if (now < t0) return true;
       const t = Math.min(1, (now - t0) / ANIM_MS);
       const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOutQuad
-      mover.position.x = start.x + (target.x - start.x) * e;
-      mover.position.z = start.z + (target.z - start.z) * e;
-      // Parabolic hop
+      mover.position.x = start.x + dx * e;
+      mover.position.z = start.z + dz * e;
       const hop = Math.sin(Math.PI * t);
       mover.position.y = start.y + (target.y - start.y) * e + hop * (apexY - Math.max(start.y, target.y));
+      mover.rotation.x = tiltX * hop;
+      mover.rotation.z = tiltZ * hop;
+
+      if (crossesRiver && !rippleFired && t >= 0.45) {
+        rippleFired = true;
+        this.scene.triggerRiverRipple((start.x + target.x) * 0.5, 0);
+      }
+      this.scene.requestShadowUpdate();
+
       if (t >= 1) {
         mover.position.copy(target);
+        mover.rotation.x = 0;
+        mover.rotation.z = 0;
         mover.userData.gridPos = { x: mv.toX, y: mv.toY };
         this._syncPieceIndices();
+        this.scene.fx?.playLand?.({ at: target, isCapture: !!capMesh, type: attackerType });
+        this.scene.requestShadowUpdate();
         return false;
       }
       mover.userData.gridPos = { x: mv.toX, y: mv.toY };
@@ -286,9 +363,23 @@ export class Game {
     this._animQueue.push(anim);
   }
 
-  tickAnimations(now = performance.now()) {
-    this.scene.fx?.tick(now);
-    if (!this._animQueue.length) return;
+  tickAnimations(now = performance.now(), dt = 0.016) {
+    this.scene.fx?.tick(now, dt);
+    if (!this._animQueue.length) {
+      const damp = 1 - Math.exp(-16 * dt);
+      for (const mesh of this.pieceMeshes.values()) {
+        if (mesh.scale.x > 1.02) continue;
+        const targetY = mesh === this._hoveredMesh ? PIECE_BASE_Y + 0.075 : PIECE_BASE_Y;
+        const diff = targetY - mesh.position.y;
+        if (Math.abs(diff) > 0.0005) {
+          mesh.position.y += diff * damp;
+          this.scene.requestShadowUpdate();
+        } else if (mesh.position.y !== targetY) {
+          mesh.position.y = targetY;
+        }
+      }
+      return;
+    }
     this._animQueue = this._animQueue.filter(fn => fn(now));
   }
 
@@ -378,16 +469,20 @@ export class Game {
       this.hintRing = createHighlightRing(0x4ec9ff, PIECE_RADIUS * 1.2);
       this.scene.markerLayer.add(this.hintRing);
     }
-    // Show two rings — source and destination — via a group.
+    if (!this.hintDestRing) {
+      this.hintDestRing = createHighlightRing(0x4ec9ff);
+      this.scene.markerLayer.add(this.hintDestRing);
+    }
     this.hintRing.position.copy(gridToWorld(mv.fromX, mv.fromY, 0.02));
     this.hintRing.visible = true;
-    const dest = createHighlightRing(0x4ec9ff);
-    dest.position.copy(gridToWorld(mv.toX, mv.toY, 0.02));
-    this.scene.markerLayer.add(dest);
-    this.markers.push(dest);
+    this.hintDestRing.position.copy(gridToWorld(mv.toX, mv.toY, 0.02));
+    this.hintDestRing.visible = true;
     this.emit('toast', { message: `Hint: ${moveToNotation(this.board, mv)}`, kind: 'info' });
-    setTimeout(() => { if (this.hintRing) this.hintRing.visible = false; }, 3200);
-    setTimeout(() => { this.scene.markerLayer.remove(dest); }, 3200);
+    clearTimeout(this._hintTimer);
+    this._hintTimer = setTimeout(() => {
+      if (this.hintRing) this.hintRing.visible = false;
+      if (this.hintDestRing) this.hintDestRing.visible = false;
+    }, 3200);
   }
 
   // Undo 2 ply (own move + AI reply). Unrestricted in offline mode per the spec.

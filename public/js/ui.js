@@ -53,6 +53,8 @@ export class UI {
       undoAccept: $('#undo-accept'),
       undoDecline: $('#undo-decline'),
       panelLeft: $('#panel-left'),
+      panelRight: $('#panel-right'),
+      drawerBackdrop: $('#drawer-backdrop'),
       replayList: $('#replay-list'),
       replayControls: $('#replay-controls'),
       bottomSheet: $('#bottom-sheet'),
@@ -118,14 +120,38 @@ export class UI {
     $('#btn-quick')?.addEventListener('click', () => this.quickMatch());
     $('#btn-join')?.addEventListener('click', () => this.joinRoom());
 
-    // Game controls (desktop + mobile)
-    for (const id of ['btn-undo', 'btn-undo-m']) $(`#${id}`)?.addEventListener('click', () => this.game.undo());
-    for (const id of ['btn-hint', 'btn-hint-m']) $(`#${id}`)?.addEventListener('click', () => this.game.requestHint());
-    for (const id of ['btn-flip', 'btn-flip-m']) $(`#${id}`)?.addEventListener('click', () => this.game.scene.flip());
-    for (const id of ['btn-resign', 'btn-resign-m']) $(`#${id}`)?.addEventListener('click', () => this.confirmResign());
+    // Game controls (desktop + mobile + floating HUD plaques)
+    for (const id of ['btn-undo', 'btn-undo-m', 'hud-btn-undo']) $(`#${id}`)?.addEventListener('click', () => this.game.undo());
+    for (const id of ['btn-hint', 'btn-hint-m', 'hud-btn-hint']) $(`#${id}`)?.addEventListener('click', () => this.game.requestHint());
+    for (const id of ['btn-flip', 'btn-flip-m', 'hud-btn-flip']) $(`#${id}`)?.addEventListener('click', () => this.game.scene.flip());
+    for (const id of ['btn-resign', 'btn-resign-m', 'hud-btn-resign']) $(`#${id}`)?.addEventListener('click', () => this.confirmResign());
 
-    // Mobile menu button toggles the left panel drawer
-    $('#btn-menu')?.addEventListener('click', () => this.el.panelLeft.classList.toggle('open'));
+    // Slide-out drawer toggles (left menu & right records)
+    const syncBackdrop = () => {
+      const anyOpen = this.el.panelLeft?.classList.contains('open') || this.el.panelRight?.classList.contains('open');
+      this.el.drawerBackdrop?.classList.toggle('hidden', !anyOpen);
+    };
+    const closeDrawers = () => {
+      this.el.panelLeft?.classList.remove('open');
+      this.el.panelRight?.classList.remove('open');
+      syncBackdrop();
+    };
+    const toggleLeft = () => {
+      this.el.panelRight?.classList.remove('open');
+      this.el.panelLeft?.classList.toggle('open');
+      syncBackdrop();
+    };
+    const toggleRight = () => {
+      this.el.panelLeft?.classList.remove('open');
+      this.el.panelRight?.classList.toggle('open');
+      syncBackdrop();
+    };
+    $('#btn-menu')?.addEventListener('click', toggleLeft);
+    $('#hud-btn-menu')?.addEventListener('click', toggleLeft);
+    $('#hud-btn-records')?.addEventListener('click', toggleRight);
+    $('#btn-close-left')?.addEventListener('click', closeDrawers);
+    $('#btn-close-right')?.addEventListener('click', closeDrawers);
+    this.el.drawerBackdrop?.addEventListener('click', closeDrawers);
 
     // Bottom sheet drag/tap to expand
     this.el.bottomSheet?.addEventListener('click', (e) => {
@@ -207,7 +233,9 @@ export class UI {
 
   newOfflineGame() {
     this.mode = 'offline';
-    this.el.panelLeft.classList.remove('open');
+    this.el.panelLeft?.classList.remove('open');
+    this.el.panelRight?.classList.remove('open');
+    this.el.drawerBackdrop?.classList.add('hidden');
     this.game.reset({
       mode: 'offline',
       humanSide: this.humanSide,

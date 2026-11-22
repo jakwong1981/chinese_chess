@@ -1,4 +1,5 @@
-// Capture bursts and the 千軍萬馬 check spectacle.
+// Capture bursts, GPU Points particle pool, dynamic impact lighting, wooden move audio,
+// and the 千軍萬馬 check spectacle.
 // Piece front is local −Z; yawFacing (from pieces.js) is the only heading helper.
 
 import * as THREE from 'three';
@@ -19,6 +20,8 @@ const _s = new THREE.Vector3();
 const _m = new THREE.Matrix4();
 const _UP = new THREE.Vector3(0, 1, 0);
 const _RIGHT = new THREE.Vector3(1, 0, 0);
+const _tmpColor = new THREE.Color();
+
 let audioCtx = null;
 let noiseBuf = null;
 
@@ -62,14 +65,14 @@ function tone(ac, freq, dur, type, gain) {
   o.stop(t + dur);
 }
 
-function crack(ac, dur, gain) {
+function crack(ac, dur, gain, startFreq = 1800, endFreq = 180) {
   const t = ac.currentTime;
   const src = ac.createBufferSource();
   src.buffer = noiseBuffer(ac);
   const filter = ac.createBiquadFilter();
   filter.type = 'lowpass';
-  filter.frequency.setValueAtTime(1800, t);
-  filter.frequency.exponentialRampToValueAtTime(180, t + dur);
+  filter.frequency.setValueAtTime(startFreq, t);
+  filter.frequency.exponentialRampToValueAtTime(endFreq, t + dur);
   const g = ac.createGain();
   g.gain.setValueAtTime(gain, t);
   g.gain.exponentialRampToValueAtTime(0.001, t + dur);
@@ -78,6 +81,23 @@ function crack(ac, dur, gain) {
   g.connect(ac.destination);
   src.start(t);
   src.stop(t + dur);
+}
+
+function playWoodMoveSound(isCapture = false) {
+  withAudio((ac) => {
+    // Crisp wooden clack: short resonant body + high-frequency woody transient
+    const pitch = isCapture ? 260 : 340 + (Math.random() - 0.5) * 35;
+    tone(ac, pitch, isCapture ? 0.11 : 0.075, 'triangle', isCapture ? 0.34 : 0.24);
+    tone(ac, pitch * 2.15, 0.045, 'sine', isCapture ? 0.16 : 0.1);
+    crack(ac, isCapture ? 0.09 : 0.055, isCapture ? 0.28 : 0.16, 2600, 420);
+  });
+}
+
+function playWoodSelectSound() {
+  withAudio((ac) => {
+    tone(ac, 520, 0.04, 'sine', 0.09);
+    crack(ac, 0.025, 0.07, 3200, 900);
+  });
 }
 
 function playCannonSound() {
@@ -110,21 +130,6 @@ function shout(text) {
   }
 }
 
-function spriteTexture(inner, outer) {
-  const c = document.createElement('canvas');
-  c.width = c.height = 64;
-  const g = c.getContext('2d');
-  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  grd.addColorStop(0, inner);
-  grd.addColorStop(0.45, outer);
-  grd.addColorStop(1, 'rgba(0,0,0,0)');
-  g.fillStyle = grd;
-  g.fillRect(0, 0, 64, 64);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
 function isolateMaterials(mesh) {
   const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
   const cloned = list.map((m) => {
@@ -152,7 +157,6 @@ function bakeMini(geom, x, y, z, rx = 0, ry = 0, rz = 0) {
 }
 
 function miniHorseGeom() {
-  // Local −Z is the nose. About 0.84 long and 1.18 tall so a row reads as cavalry, not a dash.
   return mergeGeometries([
     bakeMini(new THREE.BoxGeometry(0.36, 0.26, 0.52), 0, 0.5, 0),
     bakeMini(new THREE.BoxGeometry(0.3, 0.2, 0.18), 0, 0.48, -0.28),
@@ -185,77 +189,223 @@ function miniSoldierGeom() {
   ], false);
 }
 
-export function createFx(scene) {
+// GPU-driven pre-allocated particle pool (zero per-frame allocations)
+function createParticlePool(parent, maxCount = 280) {
+  const positions = new Float32Array(maxCount * 3);
+  const colors = new Float32Array(maxCount * 3);
+  const sizes = new Float32Array(maxCount);
+  const alphas = new Float32Array(maxCount);
+
+  const vel = new Float32Array(maxCount * 3);
+  const age = new Float32Array(maxCount);
+  const life = new Float32Array(maxCount);
+  const startSize = new Float32Array(maxCount);
+  const endSize = new Float32Array(maxCount);
+  const gravity = new Float32Array(maxCount);
+  const drag = new Float32Array(maxCount);
+
+  const geom = new THREE.BufferGeometry();
+  const posAttr = new THREE.BufferAttribute(positions, 3);
+  const colAttr = new THREE.BufferAttribute(colors, 3);
+  const sizeAttr = new THREE.BufferAttribute(sizes, 1);
+  const alphaAttr = new THREE.BufferAttribute(alphas, 1);
+  posAttr.setUsage(THREE.DynamicDrawUsage);
+  colAttr.setUsage(THREE.DynamicDrawUsage);
+  sizeAttr.setUsage(THREE.DynamicDrawUsage);
+  alphaAttr.setUsage(THREE.DynamicDrawUsage);
+
+  geom.setAttribute('position', posAttr);
+  geom.setAttribute('aColor', colAttr);
+  geom.setAttribute('aSize', sizeAttr);
+  geom.setAttribute('aAlpha', alphaAttr);
+
+  const mat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    vertexShader: `
+      attribute vec3 aColor;
+      attribute float aSize;
+      attribute float aAlpha;
+      varying vec3 vColor;
+      varying float vAlpha;
+      void main() {
+        vColor = aColor;
+        vAlpha = aAlpha;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = aSize * (320.0 / max(1.0, -mvPosition.z));
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+      void main() {
+        if (vAlpha <= 0.005) discard;
+        vec2 c = gl_PointCoord - vec2(0.5);
+        float d = length(c) * 2.0;
+        float soft = smoothstep(1.0, 0.0, d);
+        float core = smoothstep(0.6, 0.0, d);
+        gl_FragColor = vec4(vColor * (0.9 + core * 0.55), soft * soft * vAlpha);
+      }
+    `
+  });
+
+  const points = new THREE.Points(geom, mat);
+  points.frustumCulled = false;
+  points.renderOrder = 4;
+  parent.add(points);
+
+  let cursor = 0;
+  let activeCount = 0;
+
+  function spawn(x, y, z, vx, vy, vz, colorHex, s0, s1, lifeSec, grav = -2.8, drg = 0.96) {
+    const i = cursor;
+    cursor = (cursor + 1) % maxCount;
+    const i3 = i * 3;
+    positions[i3] = x;
+    positions[i3 + 1] = y;
+    positions[i3 + 2] = z;
+    vel[i3] = vx;
+    vel[i3 + 1] = vy;
+    vel[i3 + 2] = vz;
+    _tmpColor.set(colorHex);
+    colors[i3] = _tmpColor.r;
+    colors[i3 + 1] = _tmpColor.g;
+    colors[i3 + 2] = _tmpColor.b;
+    startSize[i] = s0;
+    endSize[i] = s1;
+    sizes[i] = s0;
+    alphas[i] = 1.0;
+    age[i] = 0;
+    life[i] = Math.max(0.05, lifeSec);
+    gravity[i] = grav;
+    drag[i] = drg;
+    activeCount = Math.min(maxCount, activeCount + 1);
+  }
+
+  function update(dt) {
+    if (activeCount === 0) return;
+    let alive = 0;
+    const dragPow = dt * 60;
+    for (let i = 0; i < maxCount; i++) {
+      if (life[i] <= 0) continue;
+      age[i] += dt;
+      if (age[i] >= life[i]) {
+        life[i] = 0;
+        alphas[i] = 0;
+        sizes[i] = 0;
+        continue;
+      }
+      alive++;
+      const t = age[i] / life[i];
+      const i3 = i * 3;
+      const d = Math.pow(drag[i], dragPow);
+      vel[i3] *= d;
+      vel[i3 + 1] = vel[i3 + 1] * d + gravity[i] * dt;
+      vel[i3 + 2] *= d;
+      positions[i3] += vel[i3] * dt;
+      positions[i3 + 1] = Math.max(0.02, positions[i3 + 1] + vel[i3 + 1] * dt);
+      positions[i3 + 2] += vel[i3 + 2] * dt;
+      sizes[i] = startSize[i] + (endSize[i] - startSize[i]) * t;
+      alphas[i] = (1 - t) * (1 - t);
+    }
+    activeCount = alive;
+    posAttr.needsUpdate = true;
+    colAttr.needsUpdate = true;
+    sizeAttr.needsUpdate = true;
+    alphaAttr.needsUpdate = true;
+  }
+
+  function clear() {
+    life.fill(0);
+    alphas.fill(0);
+    sizes.fill(0);
+    activeCount = 0;
+    alphaAttr.needsUpdate = true;
+    sizeAttr.needsUpdate = true;
+  }
+
+  return { spawn, update, clear };
+}
+
+export function createFx(scene, cameraFx = null) {
   const layer = new THREE.Group();
   layer.name = 'fx';
   scene.add(layer);
 
   const jobs = [];
-  const flashTex = spriteTexture('#fff6d0', 'rgba(255,140,40,0.85)');
-  const smokeTex = spriteTexture('rgba(90,90,90,0.7)', 'rgba(40,40,40,0.2)');
-  const dustTex = spriteTexture('rgba(196,160,110,0.85)', 'rgba(120,80,40,0.15)');
+  const particles = createParticlePool(layer, 320);
+
+  // Shared impact point light (flashes dynamically on cannon blast / rook strike / check)
+  const flashLight = new THREE.PointLight(0xffb860, 0, 10, 2);
+  flashLight.position.set(0, 1.2, 0);
+  layer.add(flashLight);
+
+  // Shared geometries for shockwave rings and beams
+  const sharedRingGeom = new THREE.RingGeometry(0.14, 0.24, 32);
+  sharedRingGeom.rotateX(-Math.PI / 2);
+  const sharedBeamGeom = new THREE.BoxGeometry(0.28, 0.65, 1);
 
   let horses = null;
   let soldiers = null;
   let check = null;
 
-  function addSprite(tex, color, size) {
-    const mat = new THREE.SpriteMaterial({
-      map: tex, color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
-    });
-    const s = new THREE.Sprite(mat);
-    s.scale.setScalar(size);
-    layer.add(s);
-    return s;
-  }
-
-  function burst(at, tex, color, count, spread, life) {
-    const sprites = [];
-    for (let i = 0; i < count; i++) {
-      const s = addSprite(tex, color, 0.25 + Math.random() * 0.35);
-      s.position.copy(at);
-      s.userData.vel = new THREE.Vector3(
-        (Math.random() - 0.5) * spread,
-        Math.random() * spread,
-        (Math.random() - 0.5) * spread
-      );
-      sprites.push(s);
-    }
+  function flashAt(at, color = 0xffb860, intensity = 6.5, lifeMs = 360) {
+    flashLight.color.set(color);
+    flashLight.position.set(at.x, (at.y || 0) + 0.75, at.z);
+    flashLight.intensity = intensity;
     const t0 = performance.now();
     jobs.push((now) => {
-      const t = (now - t0) / life;
-      if (t >= 1) {
-        for (const s of sprites) {
-          layer.remove(s);
-          s.material.dispose();
-        }
-        return false;
-      }
-      for (const s of sprites) {
-        s.position.addScaledVector(s.userData.vel, 0.016);
-        s.material.opacity = 1 - t;
-        s.scale.setScalar((0.3 + t) * (1 + t));
-      }
-      return true;
+      const t = Math.min(1, (now - t0) / lifeMs);
+      flashLight.intensity = intensity * (1 - t) * (1 - t);
+      return t < 1;
     });
+  }
+
+  function burst(at, color, count, spread, lifeMs, opts = {}) {
+    const lifeSec = lifeMs / 1000;
+    const s0 = opts.s0 ?? 0.35;
+    const s1 = opts.s1 ?? 0.9;
+    const grav = opts.gravity ?? -3.2;
+    const drg = opts.drag ?? 0.95;
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const spd = (0.35 + Math.random() * 0.65) * spread;
+      particles.spawn(
+        at.x + (Math.random() - 0.5) * 0.12,
+        at.y + Math.random() * 0.1,
+        at.z + (Math.random() - 0.5) * 0.12,
+        Math.cos(angle) * spd,
+        (0.45 + Math.random() * 0.85) * spread,
+        Math.sin(angle) * spd,
+        color,
+        s0 * (0.75 + Math.random() * 0.5),
+        s1 * (0.75 + Math.random() * 0.5),
+        lifeSec * (0.7 + Math.random() * 0.45),
+        grav,
+        drg
+      );
+    }
   }
 
   function launchVictim(mesh, dir, wild) {
     const mats = isolateMaterials(mesh);
     const origin = mesh.position.clone();
-    const spin = wild ? 0.18 : 0.04;
+    const spinRate = wild ? 11.0 : 2.5;
     const t0 = performance.now();
     const life = wild ? 680 : 420;
-    jobs.push((now) => {
+    jobs.push((now, dt) => {
       const t = Math.min(1, (now - t0) / life);
       mesh.position.set(
-        origin.x + dir.x * t * (wild ? 1.4 : 0.25),
-        origin.y + Math.sin(t * Math.PI) * (wild ? 1.35 : 0.28),
-        origin.z + dir.z * t * (wild ? 1.4 : 0.25)
+        origin.x + dir.x * t * (wild ? 1.5 : 0.28),
+        origin.y + Math.sin(t * Math.PI) * (wild ? 1.45 : 0.3),
+        origin.z + dir.z * t * (wild ? 1.5 : 0.28)
       );
       if (wild) {
-        mesh.rotation.x += spin;
-        mesh.rotation.z += spin * 0.7;
+        mesh.rotation.x += spinRate * dt;
+        mesh.rotation.z += spinRate * 0.7 * dt;
       }
       setOpacity(mats, 1 - t);
       mesh.scale.setScalar(1 - t * 0.35);
@@ -273,16 +423,32 @@ export function createFx(scene) {
     dir.y = 0;
     const len = dir.length() || 1;
     dir.multiplyScalar(1 / len);
-    const ball = addSprite(flashTex, 0xfff1c2, 0.85);
     const muzzle = from.clone().addScaledVector(dir, 0.4);
-    muzzle.y = 0.34;
+    muzzle.y = 0.36;
+    const targetPos = to.clone();
+    targetPos.y = 0.3;
+
+    const ball = new THREE.Mesh(
+      new THREE.SphereGeometry(0.14, 12, 10),
+      new THREE.MeshBasicMaterial({ color: 0xffe8a0, toneMapped: false })
+    );
     ball.position.copy(muzzle);
+    layer.add(ball);
+
     const t0 = performance.now();
     jobs.push((now) => {
       const t = Math.min(1, (now - t0) / CANNON_FLIGHT_MS);
-      ball.position.lerpVectors(muzzle, to.clone().setY(0.3), t);
+      ball.position.lerpVectors(muzzle, targetPos, t);
+      ball.position.y += Math.sin(t * Math.PI) * 0.55;
+      // Glowing ember trail
+      particles.spawn(
+        ball.position.x, ball.position.y, ball.position.z,
+        (Math.random() - 0.5) * 0.4, 0.35, (Math.random() - 0.5) * 0.4,
+        0xffa438, 0.42, 0.08, 0.22, -0.5, 0.94
+      );
       if (t >= 1) {
         layer.remove(ball);
+        ball.geometry.dispose();
         ball.material.dispose();
         return false;
       }
@@ -298,7 +464,7 @@ export function createFx(scene) {
     const t0 = performance.now();
     jobs.push((now) => {
       const t = Math.min(1, (now - t0) / CANNON_FLIGHT_MS);
-      const kick = Math.sin(t * Math.PI) * 0.14;
+      const kick = Math.sin(t * Math.PI) * 0.16;
       mover.position.set(home.x - dir.x * kick, home.y, home.z - dir.z * kick);
       if (t >= 1) {
         mover.position.copy(home);
@@ -314,23 +480,23 @@ export function createFx(scene) {
     const dz = to.z - from.z;
     const len = Math.hypot(dx, dz) || 0.001;
     const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.28, 0.72, len),
+      sharedBeamGeom,
       new THREE.MeshBasicMaterial({
-        color, transparent: true, opacity: 0.9, depthWrite: false,
-        blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+        color, transparent: true, opacity: 0.95, depthWrite: false,
+        blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false
       })
     );
-    mesh.position.set((from.x + to.x) / 2, 0.38, (from.z + to.z) / 2);
+    mesh.scale.set(1, 1, len);
+    mesh.position.set((from.x + to.x) / 2, 0.36, (from.z + to.z) / 2);
     mesh.rotation.y = Math.atan2(dx, dz);
     layer.add(mesh);
     const t0 = performance.now();
     jobs.push((now) => {
       const t = Math.min(1, (now - t0) / 520);
-      mesh.material.opacity = 0.85 * (1 - t);
-      mesh.scale.x = 1 + t * 2;
+      mesh.material.opacity = 0.9 * (1 - t);
+      mesh.scale.x = 1 + t * 2.2;
       if (t >= 1) {
         layer.remove(mesh);
-        mesh.geometry.dispose();
         mesh.material.dispose();
         return false;
       }
@@ -338,24 +504,23 @@ export function createFx(scene) {
     });
   }
 
-  function ringAt(at, color, life) {
+  function ringAt(at, color, life = 420, maxScale = 3.2) {
     const mesh = new THREE.Mesh(
-      new THREE.RingGeometry(0.12, 0.2, 28),
+      sharedRingGeom,
       new THREE.MeshBasicMaterial({
-        color, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false
+        color, transparent: true, opacity: 0.92, side: THREE.DoubleSide,
+        depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false
       })
     );
-    mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(at.x, 0.03, at.z);
     layer.add(mesh);
     const t0 = performance.now();
     jobs.push((now) => {
       const t = Math.min(1, (now - t0) / life);
-      mesh.scale.setScalar(1 + t * 3.2);
+      mesh.scale.setScalar(1 + t * maxScale);
       mesh.material.opacity = 0.9 * (1 - t);
       if (t >= 1) {
         layer.remove(mesh);
-        mesh.geometry.dispose();
         mesh.material.dispose();
         return false;
       }
@@ -365,13 +530,16 @@ export function createFx(scene) {
 
   function ensureArmy() {
     if (horses) return;
+    // Keep transparent: true permanently so fading never triggers a shader recompile hitch!
     const horseMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff, roughness: 0.62, metalness: 0.04,
-      emissive: 0x1a120c, emissiveIntensity: 0.35
+      color: 0xffffff, roughness: 0.58, metalness: 0.06,
+      emissive: 0x22140c, emissiveIntensity: 0.4,
+      transparent: true, opacity: 1
     });
     const manMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff, roughness: 0.58, metalness: 0.05,
-      emissive: 0x1a120c, emissiveIntensity: 0.35
+      color: 0xffffff, roughness: 0.55, metalness: 0.08,
+      emissive: 0x22140c, emissiveIntensity: 0.4,
+      transparent: true, opacity: 1
     });
     horses = new THREE.InstancedMesh(miniHorseGeom(), horseMat, 28);
     soldiers = new THREE.InstancedMesh(miniSoldierGeom(), manMat, 40);
@@ -383,9 +551,6 @@ export function createFx(scene) {
     soldiers.castShadow = true;
     horses.visible = false;
     soldiers.visible = false;
-    const brown = new THREE.Color('#6b4428');
-    const gold = new THREE.Color('#e6c56a');
-    for (let i = 0; i < 28; i++) horses.setColorAt(i, i % 5 === 0 ? gold : brown);
     layer.add(horses);
     layer.add(soldiers);
   }
@@ -394,7 +559,6 @@ export function createFx(scene) {
     const color = new THREE.Color(opts.tint);
     const accent = new THREE.Color(opts.accent);
     const { scale, laneGap, rowGap, zBias } = opts;
-    // Same travel for every rank so the column keeps its depth instead of collapsing on the king.
     const travel = 8.6;
     const front = 6.0;
     mesh.userData.chargeScale = scale;
@@ -405,18 +569,19 @@ export function createFx(scene) {
       const back = row * rowGap + zBias;
       const z0 = king.z - dirZ * (front + back);
       mesh.setColorAt(i, i % opts.accentEvery === 0 ? accent : color);
+      const x1 = king.x * 0.25 + lane * 0.78;
+      const z1 = z0 + dirZ * travel;
       mesh.userData.paths[i] = {
         x0: lane,
         z0,
-        x1: king.x * 0.25 + lane * 0.78,
-        z1: z0 + dirZ * travel,
+        x1,
+        z1,
+        yaw: yawFacing(x1 - lane, z1 - z0),
         phase: i * 0.37
       };
-      const path = mesh.userData.paths[i];
-      const yaw = yawFacing(path.x1 - path.x0, path.z1 - path.z0);
-      _q.setFromAxisAngle(_UP, yaw);
+      _q.setFromAxisAngle(_UP, mesh.userData.paths[i].yaw);
       _s.set(scale, scale, scale);
-      _p.set(path.x0, 0, path.z0);
+      _p.set(lane, 0, z0);
       mesh.setMatrixAt(i, _m.compose(_p, _q, _s));
     }
     mesh.instanceColor.needsUpdate = true;
@@ -461,32 +626,24 @@ export function createFx(scene) {
     soldiers.visible = true;
     horses.material.opacity = 1;
     soldiers.material.opacity = 1;
-    horses.material.transparent = true;
-    soldiers.material.transparent = true;
+
+    cameraFx?.pulseZoom?.(-1.1, CHECK_RUN_MS);
+    cameraFx?.shake?.(0.14, 380);
+    flashAt(king, attackerSide === RED ? 0xff5a36 : 0x62b8ff, 5.5, 900);
+
     const state = {
       running: true, mate: !!mate, called: false, done: false, dead: false, onDone, t0: performance.now()
     };
     check = state;
 
-    const dust = [];
-    for (let i = 0; i < 36; i++) {
-      const s = addSprite(dustTex, 0xc4a06e, 0.85 + (i % 5) * 0.18);
-      s.material.blending = THREE.NormalBlending;
-      dust.push(s);
-    }
-
     jobs.push((now) => {
       if (state.dead) {
         horses.visible = false;
         soldiers.visible = false;
-        for (const s of dust) {
-          layer.remove(s);
-          s.material.dispose();
-        }
         return false;
       }
       const t = (now - state.t0) / CHECK_RUN_MS;
-      const fade = t > 0.75 ? 1 - (t - 0.75) / 0.25 : 1;
+      const fade = t > 0.75 ? Math.max(0, 1 - (t - 0.75) / 0.25) : 1;
       const step = (mesh) => {
         const paths = mesh.userData.paths;
         const scale = mesh.userData.chargeScale || 1;
@@ -500,48 +657,50 @@ export function createFx(scene) {
             bob,
             path.z0 + (path.z1 - path.z0) * u
           );
-          const yaw = yawFacing(path.x1 - path.x0, path.z1 - path.z0);
-          _q.setFromAxisAngle(_UP, yaw);
+          _q.setFromAxisAngle(_UP, path.yaw);
           _q2.setFromAxisAngle(_RIGHT, gallop * 0.22);
           _q.multiply(_q2);
           _s.set(scale, scale * (1 + gallop * 0.04), scale);
           mesh.setMatrixAt(i, _m.compose(_p, _q, _s));
         }
         mesh.instanceMatrix.needsUpdate = true;
-        mesh.material.opacity = Math.max(0, fade);
-        mesh.material.transparent = fade < 1;
+        mesh.material.opacity = fade;
       };
       if (!state.done) {
-      step(horses);
-      step(soldiers);
-      for (let i = 0; i < dust.length; i++) {
-        const s = dust[i];
-        const herd = i < 16 ? horses.userData.paths : soldiers.userData.paths;
-        const path = herd[i % herd.length];
-        const u = Math.min(1, Math.max(0, t - 0.04));
-        s.position.set(
-          path.x0 + (path.x1 - path.x0) * u + ((i % 5) - 2) * 0.28,
-          0.12 + (i % 3) * 0.08,
-          path.z0 + (path.z1 - path.z0) * u - 0.35
-        );
-        s.material.opacity = Math.max(0, fade) * 0.65;
-      }
+        step(horses);
+        step(soldiers);
+        cameraFx?.requestShadowUpdate?.();
+        // Emit hoof dust via GPU particle pool
+        if (fade > 0.2) {
+          for (let k = 0; k < 3; k++) {
+            const hPath = horses.userData.paths[(Math.random() * horses.userData.paths.length) | 0];
+            const u = Math.min(1, Math.max(0, t - 0.03));
+            particles.spawn(
+              hPath.x0 + (hPath.x1 - hPath.x0) * u + (Math.random() - 0.5) * 0.35,
+              0.08,
+              hPath.z0 + (hPath.z1 - hPath.z0) * u - dirZ * 0.3,
+              (Math.random() - 0.5) * 0.6,
+              0.5 + Math.random() * 0.6,
+              -dirZ * 0.5,
+              0xc9a878, 0.32, 0.95, 0.45, -0.8, 0.95
+            );
+          }
+        }
       }
       if (!state.called && now - state.t0 >= CHECK_CALL_AT) {
         state.called = true;
         const said = state.mate ? '將死' : '將軍';
         setCall(said);
         playDrum();
+        cameraFx?.shake?.(0.22, 420);
+        ringAt(king, 0xffd060, 620, 4.4);
         shout(said);
       }
       if (t >= 1 && !state.done) {
         state.done = true;
         horses.visible = false;
         soldiers.visible = false;
-        for (const s of dust) {
-          layer.remove(s);
-          s.material.dispose();
-        }
+        cameraFx?.requestShadowUpdate?.();
       }
       if (state.done && now - state.t0 >= CHECK_DONE_MS) {
         hideCall();
@@ -554,6 +713,14 @@ export function createFx(scene) {
     });
   }
 
+  function playLand({ at, isCapture = false, type = null }) {
+    playWoodMoveSound(isCapture);
+    ringAt(at, isCapture ? 0xf5b942 : 0xd8c39a, isCapture ? 380 : 260, isCapture ? 2.4 : 1.4);
+    if (type === HORSE || type === ELEPHANT) {
+      burst(at.clone().setY(0.06), 0xc4a06e, 8, 1.4, 360, { s0: 0.24, s1: 0.65, gravity: -1.6 });
+    }
+  }
+
   function playCapture({ type, from, to, victim, mover }) {
     const dir = new THREE.Vector3().subVectors(to, from);
     dir.y = 0;
@@ -563,15 +730,18 @@ export function createFx(scene) {
 
     if (type === CANNON) {
       playCannonSound();
-      burst(from.clone().setY(0.35), flashTex, 0xfff1c2, 10, 1.1, 260);
+      burst(from.clone().setY(0.35), 0xfff0b8, 12, 2.2, 280, { s0: 0.35, s1: 0.1, gravity: -1.5 });
+      flashAt(from, 0xffd278, 5.0, 200);
       const aim = shot(from, to);
       if (mover) recoil(mover, aim);
       const t0 = performance.now();
       jobs.push((now) => {
         if (now - t0 < CANNON_FLIGHT_MS) return true;
-        burst(to.clone().setY(0.25), flashTex, 0xffe2a0, 18, 2.4, 720);
-        burst(to.clone().setY(0.2), smokeTex, 0x888888, 10, 1.1, 860);
-        ringAt(to, 0xffb060, 480);
+        burst(to.clone().setY(0.25), 0xffc864, 24, 3.8, 650, { s0: 0.5, s1: 0.12, gravity: -4.2 });
+        burst(to.clone().setY(0.22), 0xff6b2b, 14, 2.6, 520, { s0: 0.45, s1: 1.0, gravity: -0.8 });
+        ringAt(to, 0xffb060, 480, 3.8);
+        flashAt(to, 0xff9a3c, 8.5, 420);
+        cameraFx?.shake?.(0.24, 260);
         if (victim) launchVictim(victim, dir, true);
         return false;
       });
@@ -579,11 +749,27 @@ export function createFx(scene) {
     }
 
     if (victim) launchVictim(victim, dir, wild);
-    if (type === ROOK) beam(from, to, 0xf0d090);
-    else if (type === HORSE) burst(to.clone().setY(0.05), dustTex, 0xc4a06e, 10, 0.8, 480);
-    else if (type === ELEPHANT) ringAt(to, 0xd7c4a0, 420);
-    else if (type === PAWN) burst(to.clone().setY(0.2), flashTex, 0xffd0a0, 8, 0.9, 360);
-    else ringAt(to, 0xf0d78a, 360);
+    if (type === ROOK) {
+      beam(from, to, 0xffd98a);
+      burst(to.clone().setY(0.2), 0xffe29a, 16, 3.0, 480);
+      flashAt(to, 0xffd278, 6.0, 320);
+      cameraFx?.shake?.(0.16, 200);
+    } else if (type === HORSE) {
+      burst(to.clone().setY(0.08), 0xd4b07a, 14, 2.2, 480, { gravity: -2.0 });
+      ringAt(to, 0xe8c47a, 400, 2.8);
+      cameraFx?.shake?.(0.1, 150);
+    } else if (type === ELEPHANT) {
+      ringAt(to, 0xd7c4a0, 460, 3.4);
+      burst(to.clone().setY(0.1), 0xe6d4b0, 12, 1.9, 440);
+      cameraFx?.shake?.(0.12, 170);
+    } else if (type === PAWN) {
+      burst(to.clone().setY(0.2), 0xffd0a0, 10, 2.0, 360);
+      flashAt(to, 0xffc880, 3.8, 220);
+      cameraFx?.shake?.(0.07, 120);
+    } else {
+      ringAt(to, 0xf0d78a, 360, 2.6);
+      cameraFx?.shake?.(0.08, 120);
+    }
   }
 
   return {
@@ -593,6 +779,8 @@ export function createFx(scene) {
     },
     clear() {
       hideCall();
+      particles.clear();
+      flashLight.intensity = 0;
       window.speechSynthesis?.cancel();
       if (check) {
         check.dead = true;
@@ -603,11 +791,14 @@ export function createFx(scene) {
       if (horses) horses.visible = false;
       if (soldiers) soldiers.visible = false;
     },
-    tick(now) {
+    tick(now, dt = 0.016) {
+      particles.update(dt);
       for (let i = jobs.length - 1; i >= 0; i--) {
-        if (!jobs[i](now)) jobs.splice(i, 1);
+        if (!jobs[i](now, dt)) jobs.splice(i, 1);
       }
     },
+    playSelect: playWoodSelectSound,
+    playLand,
     playCapture,
     playCheck
   };

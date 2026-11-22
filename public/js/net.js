@@ -38,16 +38,25 @@ export class StompClient {
     this._subSeq = 0;
     this._pendingConnect = null;
     this.onStatusChange = null;
+    this._login = 'anonymous';
+    this._heartbeatTimer = null;
+    this._reconnectTimer = null;
+    this._reconnectAttempts = 0;
+    this._manualClose = false;
   }
 
   connect(login = 'anonymous') {
+    this._login = login;
+    this._manualClose = false;
+    clearTimeout(this._reconnectTimer);
     return new Promise((resolve, reject) => {
       try {
         this.ws = new WebSocket(this.url);
       } catch (e) { reject(e); return; }
       this._pendingConnect = { resolve, reject };
       this.ws.onopen = () => {
-        this._send('CONNECT', { 'accept-version': '1.2', 'host': location.host, login, 'heart-beat': '0,0' });
+        this._reconnectAttempts = 0;
+        this._send('CONNECT', { 'accept-version': '1.2', 'host': location.host, login: this._login, 'heart-beat': '15000,15000' });
       };
       this.ws.onmessage = (ev) => this._onMessage(ev.data);
       this.ws.onerror = (ev) => {
@@ -56,9 +65,33 @@ export class StompClient {
       };
       this.ws.onclose = () => {
         this.connected = false;
+        this._stopHeartbeat();
         this._setStatus('closed');
+        if (!this._manualClose && this._reconnectAttempts < 6) {
+          const delay = Math.min(10000, 1000 * Math.pow(1.6, this._reconnectAttempts++));
+          this._setStatus('reconnecting', { delay });
+          this._reconnectTimer = setTimeout(() => {
+            this.connect(this._login).catch(() => {});
+          }, delay);
+        }
       };
     });
+  }
+
+  _startHeartbeat() {
+    this._stopHeartbeat();
+    this._heartbeatTimer = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        try { this.ws.send('\n'); } catch { /* ignore */ }
+      }
+    }, 15000);
+  }
+
+  _stopHeartbeat() {
+    if (this._heartbeatTimer) {
+      clearInterval(this._heartbeatTimer);
+      this._heartbeatTimer = null;
+    }
   }
 
   _setStatus(state, extra) {
@@ -76,6 +109,7 @@ export class StompClient {
     switch (frame.command) {
       case 'CONNECTED':
         this.connected = true;
+        this._startHeartbeat();
         this._setStatus('connected');
         // Re-subscribe anything that was queued before CONNECT.
         for (const [dest, entry] of this.subs) {
@@ -142,6 +176,9 @@ export class StompClient {
   }
 
   disconnect() {
+    this._manualClose = true;
+    clearTimeout(this._reconnectTimer);
+    this._stopHeartbeat();
     if (this.ws) {
       this._send('DISCONNECT', { receipt: 'bye' });
       try { this.ws.close(); } catch { /* ignore */ }

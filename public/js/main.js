@@ -6,6 +6,7 @@ import { Game } from './game.js';
 import { Input } from './input.js';
 import { UI } from './ui.js';
 import { ReplayController } from './replay.js';
+import { BgmController } from './bgm.js';
 import { RED, BLACK } from '../../shared/rules.js';
 
 const PREFS_KEY = 'xiangqi3d.prefs.v1';
@@ -45,6 +46,33 @@ function boot() {
   const replay = new ReplayController();
   ui.setReplayController(replay);
 
+  // Background Music (YouTube IFrame API, loops qct0JLjaHDc)
+  const bgmBtn = document.getElementById('btn-bgm');
+  const bgmVol = document.getElementById('bgm-volume');
+  const bgmVolOut = document.getElementById('bgm-volume-out');
+  const syncBgmUI = ({ enabled, playing, volume }) => {
+    if (bgmBtn) {
+      bgmBtn.textContent = enabled ? '♪' : '🔇';
+      bgmBtn.classList.toggle('muted', !enabled);
+      bgmBtn.classList.toggle('playing', enabled && playing);
+    }
+    if (bgmVol) bgmVol.value = volume;
+    if (bgmVolOut) bgmVolOut.textContent = `${Math.round(volume)}%`;
+  };
+  const bgm = new BgmController({ onStateChange: syncBgmUI });
+  syncBgmUI({ enabled: bgm.enabled, playing: bgm.playing, volume: bgm.volume });
+
+  bgmBtn?.addEventListener('click', () => {
+    bgm.toggle();
+  });
+  bgmVol?.addEventListener('input', (e) => {
+    bgm.setVolume(e.target.value);
+  });
+  // Unlock audio on first pointer or key interaction (browser autoplay policy)
+  const unlockBgmOnce = () => bgm.unlock();
+  window.addEventListener('pointerdown', unlockBgmOnce, { once: true });
+  window.addEventListener('keydown', unlockBgmOnce, { once: true });
+
   // Persistent player identity for the online ladder.
   const playerId = loadPlayerId();
   game.setIdentity({ playerId });
@@ -52,8 +80,10 @@ function boot() {
   const input = new Input(scene, canvas, {
     isInteractionEnabled: () => game.isInteractionEnabled(),
     isOwnPiece: (side) => game.isOwnPiece(side),
+    getPieceAt: (x, y) => game.getPieceAt(x, y),
     onSelect: (info) => game.onSelect(info),
     onMove: (mv) => game.onMove(mv),
+    onHover: (mesh) => game.onHover(mesh),
     onReject: () => game.onReject(),
     onSelectionCleared: () => game.onSelectionCleared()
   });
@@ -94,6 +124,12 @@ function boot() {
     document.getElementById('cam-elev').value = prefs.camElev;
     scene.setElevation(prefs.camElev);
   }
+  if (prefs.quality) {
+    scene.setQuality(prefs.quality);
+  }
+  document.querySelectorAll('.segmented .seg-btn[data-quality]').forEach(b => {
+    b.classList.toggle('active', b.dataset.quality === scene.quality);
+  });
 
   // Language toggle (English / Traditional Chinese)
   const LANG_KEY = 'xiangqi3d.lang';
@@ -115,10 +151,19 @@ function boot() {
     aiLevel: Number(document.getElementById('ai-level').value),
     humanSide: ui.humanSide === BLACK ? 'b' : 'r',
     playerName: document.getElementById('player-name').value,
-    camElev: Number(document.getElementById('cam-elev').value)
+    camElev: Number(document.getElementById('cam-elev').value),
+    quality: scene.quality
   });
   ['ai-level', 'ai-level-m', 'player-name', 'cam-elev'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', persist);
+  });
+  document.querySelectorAll('.segmented .seg-btn[data-quality]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.segmented .seg-btn[data-quality]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      scene.setQuality(btn.dataset.quality);
+      persist();
+    });
   });
 
   // Keyboard shortcuts
@@ -138,14 +183,9 @@ function boot() {
     }
   });
 
-  // Start the animation/render loop
-  scene.startLoop(() => {
-    game.tickAnimations();
-    // Subtle idle motion on the check flash
-    const flash = document.getElementById('check-flash');
-    if (flash && !flash.classList.contains('hidden')) {
-      flash.style.transform = `scale(${1 + Math.sin(performance.now() / 220) * 0.03})`;
-    }
+  // Start the animation/render loop (true deltaTime, zero per-frame DOM writes)
+  scene.startLoop((now, dt) => {
+    game.tickAnimations(now, dt);
   });
 
   // Populate replay list and ladder on first paint

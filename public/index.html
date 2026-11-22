@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
-<meta name="theme-color" content="#0f1420" />
+<meta name="theme-color" content="#1a1210" />
 <title>3D Xiangqi — 中國象棋</title>
 <link rel="stylesheet" href="./css/style.css" />
 <script type="importmap">
@@ -17,6 +17,10 @@
 </head>
 <body>
 <div id="app" class="app">
+  <!-- Decorative top Chinese cloud-gold trim -->
+  <div class="hud-top-trim" aria-hidden="true"></div>
+
+  <!-- Compact translucent top utility bar -->
   <header class="topbar">
     <div class="brand">
       <span class="brand-mark">象</span>
@@ -24,6 +28,7 @@
       <span class="brand-sub">中國象棋</span>
     </div>
     <div class="topbar-right">
+      <button id="btn-bgm" class="lang-toggle-btn bgm-btn" title="Toggle Background Music 背景音樂" aria-label="Toggle Background Music">♪</button>
       <button id="lang-toggle" class="lang-toggle-btn" title="Switch language">
         <span class="en">繁</span>
         <span class="zh">EN</span>
@@ -37,9 +42,107 @@
     </div>
   </header>
 
+  <!-- Full-bleed 3D Stage with floating Chinese Scroll/Plaque HUD -->
   <main class="layout">
-    <!-- LEFT PANEL: mode + settings -->
+    <section class="stage">
+      <div id="canvas-host">
+        <canvas id="board-canvas"></canvas>
+
+        <!-- TOP-LEFT: Red Player Crimson Scroll Card (ui.jpeg inspired) -->
+        <div class="hud-scroll hud-scroll-red player" id="player-red">
+          <div class="scroll-roller left" aria-hidden="true"></div>
+          <div class="scroll-inner">
+            <div class="avatar-badge red" aria-hidden="true">帥</div>
+            <div class="scroll-meta">
+              <div class="p-name">紅方玩家</div>
+              <div class="p-rating hidden" id="rating-red"></div>
+            </div>
+            <div class="clock-box">
+              <span class="hourglass" aria-hidden="true">⏳</span>
+              <div class="p-clock" id="clock-red">10:00</div>
+            </div>
+          </div>
+          <div class="scroll-roller right" aria-hidden="true"></div>
+        </div>
+
+        <!-- TOP-RIGHT: Black Player Teal-Jade Scroll Card (ui.jpeg inspired) -->
+        <div class="hud-scroll hud-scroll-black player" id="player-black">
+          <div class="scroll-roller left" aria-hidden="true"></div>
+          <div class="scroll-inner">
+            <div class="clock-box">
+              <span class="hourglass" aria-hidden="true">⏳</span>
+              <div class="p-clock" id="clock-black">10:00</div>
+            </div>
+            <div class="scroll-meta right-align">
+              <div class="p-name">黑方玩家</div>
+              <div class="p-rating hidden" id="rating-black"></div>
+            </div>
+            <div class="avatar-badge black" aria-hidden="true">將</div>
+          </div>
+          <div class="scroll-roller right" aria-hidden="true"></div>
+        </div>
+
+        <!-- CENTER TOP: Turn Banner -->
+        <div id="turn-banner" class="turn-banner">Red to move</div>
+
+        <!-- LEFT FLOATING VERTICAL PLAQUES (ui.jpeg inspired) -->
+        <nav class="hud-rail hud-rail-left" aria-label="Game actions">
+          <button id="hud-btn-menu" class="plaque-btn plaque-crimson" title="Menu & Settings">
+            <span class="zh">選單</span><span class="en">MENU</span>
+          </button>
+          <button id="hud-btn-undo" class="plaque-btn plaque-purple" title="Undo (U)">
+            <span class="zh">悔棋</span><span class="en">UNDO</span>
+          </button>
+          <button id="hud-btn-hint" class="plaque-btn plaque-jade" title="Hint (H)">
+            <span class="zh">提示</span><span class="en">HINT</span>
+          </button>
+        </nav>
+
+        <!-- RIGHT FLOATING VERTICAL PLAQUES (ui.jpeg inspired) -->
+        <nav class="hud-rail hud-rail-right" aria-label="Match tools">
+          <button id="hud-btn-records" class="plaque-btn plaque-teal" title="History, Replay & Ladder">
+            <span class="zh">棋譜</span><span class="en">LOG</span>
+          </button>
+          <button id="hud-btn-flip" class="plaque-btn plaque-amber" title="Flip Board (F)">
+            <span class="zh">翻轉</span><span class="en">FLIP</span>
+          </button>
+          <button id="hud-btn-resign" class="plaque-btn plaque-crimson" title="Resign">
+            <span class="zh">認輸</span><span class="en">QUIT</span>
+          </button>
+        </nav>
+
+        <div id="check-flash" class="check-flash hidden">CHECK</div>
+        <div id="check-call" class="check-call hidden">將軍</div>
+        <div id="toast" class="toast hidden"></div>
+      </div>
+
+      <!-- Mobile quick bottom sheet (kept for compatibility) -->
+      <div id="bottom-sheet" class="bottom-sheet">
+        <div class="sheet-grip"></div>
+        <div class="sheet-body">
+          <div class="sheet-row">
+            <button id="btn-undo-m" class="ghost">↶</button>
+            <button id="btn-hint-m" class="ghost">💡</button>
+            <button id="btn-flip-m" class="ghost">⇅</button>
+            <button id="btn-resign-m" class="ghost danger">⚑</button>
+          </div>
+          <div class="sheet-row">
+            <span class="sheet-label">AI Level</span>
+            <input id="ai-level-m" type="range" min="1" max="10" value="3" />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Backdrop for slide-out drawers -->
+    <div id="drawer-backdrop" class="drawer-backdrop hidden"></div>
+
+    <!-- LEFT DRAWER: mode, AI, online, camera & graphics quality -->
     <aside id="panel-left" class="panel panel-left">
+      <div class="drawer-header">
+        <span class="drawer-title">選單 · Settings</span>
+        <button id="btn-close-left" class="icon-btn" aria-label="Close">✕</button>
+      </div>
       <section class="card">
         <h2 class="card-title">Game Mode</h2>
         <div class="segmented" role="tablist">
@@ -85,7 +188,7 @@
       </section>
 
       <section class="card">
-        <h2 class="card-title">Controls</h2>
+        <h2 class="card-title">Controls & 3D Graphics</h2>
         <div class="btn-grid">
           <button id="btn-undo" class="ghost">↶ Undo</button>
           <button id="btn-hint" class="ghost">💡 Hint</button>
@@ -93,63 +196,40 @@
           <button id="btn-resign" class="ghost danger">⚑ Resign</button>
         </div>
         <label class="field">
-          <span>Camera</span>
+          <span>Camera Angle</span>
           <input id="cam-elev" type="range" min="15" max="80" value="32" />
+        </label>
+        <label class="field">
+          <span>Graphics Quality 畫質</span>
+          <div class="segmented small">
+            <button class="seg-btn active" data-quality="high">High 高</button>
+            <button class="seg-btn" data-quality="medium">Med 中</button>
+            <button class="seg-btn" data-quality="low">Low 低</button>
+          </div>
+        </label>
+        <label class="field">
+          <span>BGM Volume 背景音樂音量</span>
+          <div class="level-row">
+            <input id="bgm-volume" type="range" min="0" max="100" value="35" />
+            <output id="bgm-volume-out">35%</output>
+          </div>
         </label>
       </section>
     </aside>
 
-    <!-- CENTER: 3D canvas -->
-    <section class="stage">
-      <div id="canvas-host">
-        <canvas id="board-canvas"></canvas>
-        <div id="turn-banner" class="turn-banner">Red to move</div>
-        <div id="check-flash" class="check-flash hidden">CHECK</div>
-        <div id="check-call" class="check-call hidden">將軍</div>
-        <div id="toast" class="toast hidden"></div>
-      </div>
-      <div id="bottom-sheet" class="bottom-sheet">
-        <div class="sheet-grip"></div>
-        <div class="sheet-body">
-          <div class="sheet-row">
-            <button id="btn-undo-m" class="ghost">↶</button>
-            <button id="btn-hint-m" class="ghost">💡</button>
-            <button id="btn-flip-m" class="ghost">⇅</button>
-            <button id="btn-resign-m" class="ghost danger">⚑</button>
-          </div>
-          <div class="sheet-row">
-            <span class="sheet-label">AI Level</span>
-            <input id="ai-level-m" type="range" min="1" max="10" value="3" />
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- RIGHT PANEL: clocks, history, replay -->
+    <!-- RIGHT DRAWER: history, replay & ladder -->
     <aside id="panel-right" class="panel panel-right">
-      <section class="card">
-        <div class="player" id="player-black">
-          <div class="p-name">Black 黑方</div>
-          <div class="p-rating hidden" id="rating-black"></div>
-          <div class="p-clock" id="clock-black">10:00</div>
-        </div>
-      </section>
-
+      <div class="drawer-header">
+        <span class="drawer-title">棋譜與天梯 · Records</span>
+        <button id="btn-close-right" class="icon-btn" aria-label="Close">✕</button>
+      </div>
       <section class="card grow">
-        <h2 class="card-title">Move History</h2>
+        <h2 class="card-title">Move History 棋譜</h2>
         <ol id="history-list" class="history"></ol>
       </section>
 
-      <section class="card">
-        <div class="player" id="player-red">
-          <div class="p-name">Red 紅方</div>
-          <div class="p-rating hidden" id="rating-red"></div>
-          <div class="p-clock" id="clock-red">10:00</div>
-        </div>
-      </section>
-
       <section class="card replay-card">
-        <h2 class="card-title">Replay</h2>
+        <h2 class="card-title">Replay 回放</h2>
         <div class="replay-row">
           <select id="replay-list" class="select"></select>
         </div>
