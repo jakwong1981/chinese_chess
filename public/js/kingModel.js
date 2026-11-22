@@ -241,7 +241,7 @@ function buildCapeGeometry() {
   for (let i = 0; i < pos.count; i++) {
     const px = pos.getX(i); // -0.23 .. +0.23
     const py = pos.getY(i); // -0.45 (bottom) .. +0.45 (top)
-    const t = (0.45 - py) / 0.90; // 0 at shoulders -> 1 at hem
+    const t = Math.max(0, Math.min(1, (0.45 - py) / 0.90)); // 0 at shoulders -> 1 at hem
     const nx = px / 0.23;         // -1 .. +1
 
     // Flare wider as it drapes down

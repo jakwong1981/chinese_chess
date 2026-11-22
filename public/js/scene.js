@@ -46,15 +46,15 @@ export class Scene {
     pmrem.dispose();
 
     this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 300);
-    this.camTarget = new THREE.Vector3(0, 0, -0.8);
+    this.camTarget = new THREE.Vector3(0, 0, -0.4);
 
     // Smooth camera state (actual vs target for exponential damping)
-    this.camDistance = 13;
+    this.camDistance = 14.8;
     this.camAzimuth = 0;
-    this.camElevation = 32;
-    this._curDistance = 13;
+    this.camElevation = 39;
+    this._curDistance = 14.8;
     this._curAzimuth = 0;
-    this._curElevation = 32;
+    this._curElevation = 39;
 
     // Camera FX (shake + check zoom pulse)
     this._shake = { intensity: 0, until: 0, dur: 1 };
@@ -270,7 +270,7 @@ export class Scene {
     this.composer.setSize(w, h);
     this.bloomPass.resolution.set(w, h);
     this.camera.aspect = w / h;
-    this.camDistance = Math.min(60, 13 * Math.max(1, 1.1 / this.camera.aspect));
+    this.camDistance = Math.min(60, 14.8 * Math.max(1, 1.35 / this.camera.aspect));
     this.camera.updateProjectionMatrix();
     this.onResize?.();
   }

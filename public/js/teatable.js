@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { woodTexture } from './board.js';
+import { makeYeungKwongLemonTea, makeCalbeeChipsBag, makeFerreroRocherBox } from './hkSnacks.js';
 
 export const TABLE_TOP_Y = -0.385;
 export const FLOOR_Y = -18;
@@ -650,7 +651,11 @@ export function createTeaTable() {
     place(group, makeGaiwan(), 2.8, -7.3, 0, 2.6),
     place(group, makeTeaGlass(), 7.8, 1.5, 0, 3.0),
     place(group, makePastryPlate(), -6.9, -1.5, 0, 2.6),
-    place(group, makeTeacup(steamMat), -4.5, -7.8, 0, 3.0)
+    place(group, makeTeacup(steamMat), -4.5, -7.8, 0, 3.0),
+    // Hong Kong living-room snacks right beside the chessboard
+    place(group, makeYeungKwongLemonTea(), 7.3, 4.3, -0.42, 1.45),
+    place(group, makeCalbeeChipsBag(), -7.6, 2.1, 0.50, 1.35),
+    place(group, makeFerreroRocherBox(), -6.9, 5.2, 0.28, 1.25)
   ];
   for (const p of castProps) {
     p.position.y = TABLE_TOP_Y;
