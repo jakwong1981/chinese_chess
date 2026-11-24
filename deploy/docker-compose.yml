@@ -2,7 +2,7 @@
 #   xq_postgres    : match history / Elo ladder (used by xq_backend_java)
 #   xq_redis       : room state / pub-sub (used by xq_backend_java)
 #   xq_backend     : the Node mock backend serving the SPA + STOMP WebSocket
-#   xq_backend_java: Spring Boot backend (drop-in replacement) — A/B on port 8081
+#   xq_backend_java: Spring Boot backend (drop-in replacement) — A/B on port 59003
 #
 # Bring up with:  docker compose -f deploy/docker-compose.yml up -d --build
 # Java only:      docker compose -f deploy/docker-compose.yml up -d --build xq_backend_java
@@ -87,7 +87,7 @@ services:
     ports:
       # Loopback-only: public traffic arrives via hobbyland's caddy over the
       # shared-proxy docker network, never through this host port.
-      - "127.0.0.1:${BACKEND_PORT_JAVA:-8081}:8080"
+      - "127.0.0.1:${BACKEND_PORT_JAVA:-59003}:8080"
     volumes:
       - ./certs:/certs:ro
     depends_on:

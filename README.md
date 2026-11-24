@@ -110,7 +110,7 @@ npm start                                   # http://localhost:8080
 # Spring Boot — same port; stop the other backend first, Postgres must be up
 cd server-java && ./mvnw spring-boot:run    # http://localhost:8080
 
-# Side-by-side A/B via Docker (Java on https://localhost:8081, self-signed;
+# Side-by-side A/B via Docker (Java on https://localhost:59003, self-signed;
 # Postgres starts automatically). Provision the TLS pair first.
 bash deploy/ensure-certs.sh
 docker compose -f deploy/docker-compose.yml up -d --build xq_backend_java

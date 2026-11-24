@@ -47,6 +47,39 @@ run() {
   fi
 }
 
+assert_port_available() {
+  local port="$1"
+  local service="$2"
+  local port_variable="$3"
+  local conflicts
+  local listeners=""
+
+  # compose down only cleans up this project. Catch containers from other
+  # projects before Docker fails part-way through starting the stack.
+  conflicts="$(docker ps --filter "publish=${port}" --format '{{.ID}} {{.Names}}' 2>/dev/null || true)"
+  if [ -n "$conflicts" ]; then
+    printf '%s\n' "$conflicts" >&2
+    die "Host port ${port} required by ${service} is used by the Docker container(s) above. Stop/remove them or set ${port_variable} in ${ENV_FILE} to a free port, then rerun."
+  fi
+
+  if [ "$IS_MACOS" -eq 1 ]; then
+    if command -v lsof >/dev/null 2>&1; then
+      listeners="$(lsof -nP -iTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)"
+    fi
+  elif command -v ss >/dev/null 2>&1; then
+    listeners="$(ss -ltnpH "( sport = :${port} )" 2>/dev/null || true)"
+  elif command -v lsof >/dev/null 2>&1; then
+    listeners="$(lsof -nP -iTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)"
+  fi
+
+  if [ -n "$listeners" ]; then
+    printf '%s\n' "$listeners" >&2
+    die "Host port ${port} required by ${service} is already in use. Stop the process above or set ${port_variable} in ${ENV_FILE} to a free port, then rerun."
+  fi
+
+  log "Host port ${port} is available for ${service}."
+}
+
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
   if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; fi
@@ -214,6 +247,22 @@ else
   log "No existing containers found."
 fi
 
+# Fail before creating a partial stack when the configuration makes the two
+# backends race for one host port, or another project/process already owns it.
+# Default mode starts both backends for A/B checks.
+if [ "$JAVA_MODE" -eq 0 ] && [ "${BACKEND_PORT:-8080}" = "${BACKEND_PORT_JAVA:-59003}" ]; then
+  die "BACKEND_PORT and BACKEND_PORT_JAVA are both ${BACKEND_PORT:-8080}. Set them to different free ports in ${ENV_FILE} (normally 8080 and 59003), then rerun."
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  log "DRY-RUN: would verify required host ports are available."
+elif [ "$JAVA_MODE" -eq 1 ]; then
+  assert_port_available "${BACKEND_PORT_JAVA:-59003}" "xq_backend_java" "BACKEND_PORT_JAVA"
+else
+  assert_port_available "${BACKEND_PORT:-8080}" "xq_backend" "BACKEND_PORT"
+  assert_port_available "${BACKEND_PORT_JAVA:-59003}" "xq_backend_java" "BACKEND_PORT_JAVA"
+fi
+
 if [ "$JAVA_MODE" -eq 1 ]; then
   log "Building and starting the Spring Boot backend (xq_backend_java)..."
   run docker compose "${COMPOSE_ARGS[@]}" --env-file "$ENV_FILE" up -d --build xq_backend_java
@@ -225,7 +274,7 @@ run docker compose "${COMPOSE_ARGS[@]}" ps
 
 log "Deployment complete."
 if [ "$JAVA_MODE" -eq 1 ]; then
-  log "App (Java): https://localhost:${BACKEND_PORT_JAVA:-8081}/  (self-signed; curl -k)"
+  log "App (Java): https://localhost:${BACKEND_PORT_JAVA:-59003}/  (self-signed; curl -k)"
   log "Public:     https://${DOMAIN:-chinese.jackstudio.app}/  (via hobbyland's caddy)"
   log "WebSocket:  wss://${DOMAIN:-chinese.jackstudio.app}/ws"
 else
